@@ -4,17 +4,28 @@
   "type": "module",
   "main": "app.js",
   "scripts": {
-    "dev": "nodemon app.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "lint": "eslint . --fix",
-    "format": "prettier --write ."
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "install-service": "node scripts/install-service.js",
+    "uninstall-service": "node scripts/uninstall-service.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "keywords": [
+    "rabbitmq",
+    "windows-service",
+    "mssql",
+    "pos"
+  ],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
     "amqplib": "^0.10.5",
-    "mssql": "^11.0.1"
+    "dotenv": "^16.4.7",
+    "mssql": "^11.0.1",
+    "node-windows": "^1.0.0-beta.8"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
@@ -25,5 +36,8 @@
     "globals": "^15.15.0",
     "nodemon": "^3.1.9",
     "prettier": "^3.5.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
