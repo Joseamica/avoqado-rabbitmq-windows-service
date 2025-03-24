@@ -7,6 +7,21 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 
+daemon/
+*.log
+*.exe
+*.out
+*.pid
+nssm.exe
+*.sock
+
+# Specific service files
+AvoqadoRabbitMQService.*
+avoqadorabbitmqservice.*
+*avoqadorabbitmq*.xml
+*AvoqadoRabbitMQ*.xml
+*AvoqadoRabbitMQService*
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
