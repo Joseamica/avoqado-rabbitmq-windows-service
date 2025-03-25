@@ -1,6 +1,6 @@
 // src/config/rabbitmq.js
 // RabbitMQ configuration
-export const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost:5672'
+export const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqps://wkdeleat:E-37pD2qqZfeEzOoZ1VwnREE2oUqKnr8@moose.rmq.cloudamqp.com/wkdeleat'
 export const REQUEST_QUEUE = process.env.REQUEST_QUEUE || 'operations_queue' // Queue for receiving requests from the cloud
 export const RESPONSE_QUEUE = process.env.RESPONSE_QUEUE || 'responses_queue' // Queue for sending responses back to the cloud
 

@@ -64,8 +64,15 @@ export function logWarning(message) {
   }
 }
 
+export function logDebug(message) {
+  const timestamp = new Date().toISOString()
+  const logMessage = `[${timestamp}] DEBUG: ${message}\n`
+  console.debug(logMessage)
+}
+
 export default {
   logError,
   logInfo,
-  logWarning
+  logWarning,
+  logDebug
 }
