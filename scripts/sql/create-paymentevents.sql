@@ -1,7 +1,5 @@
-USE [avo]
-GO
 
-/****** Object:  Table [dbo].[PaymentEvents]    Script Date: 3/25/2025 11:19:49 AM ******/
+/****** Object:  Table [dbo].[PaymentEvents]    Script Date: 3/26/2025 12:50:33 PM ******/
 SET ANSI_NULLS ON
 GO
 

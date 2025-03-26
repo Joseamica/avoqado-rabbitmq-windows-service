@@ -15,8 +15,8 @@
     "build": "node scripts/installer/build.js",
     "electron": "electron scripts/installer/main.cjs",
     "download-icon": "node scripts/installer/download-icon.js",
-    "package": "npm run download-icon && electron-builder",
-    "build-installer": "node scripts/installer/build-electron.js",
+    "package": "node scripts/installer/download-icon.js && electron-builder --win portable --config.forceCodeSigning=false",
+    "build-installer": "node scripts/installer/download-icon.js && node scripts/installer/fix-installer-icon.js && electron-builder --win nsis --config.forceCodeSigning=false",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -63,7 +63,8 @@
         "nsis",
         "portable"
       ],
-      "icon": "scripts/installer/assets/icon.ico"
+      "icon": "scripts/installer/assets/icon.ico",
+      "artifactName": "${productName}-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -74,7 +75,9 @@
       "installerIcon": "scripts/installer/assets/icon.ico",
       "uninstallerIcon": "scripts/installer/assets/icon.ico",
       "installerHeaderIcon": "scripts/installer/assets/icon.ico"
-    }
+    },
+    "asar": true,
+    "extends": null
   },
   "author": "",
   "license": "ISC",
@@ -97,6 +100,7 @@
     "globals": "^15.15.0",
     "nodemon": "^3.1.9",
     "pkg": "^5.8.1",
+    "png-to-ico": "^2.1.8",
     "prettier": "^3.5.3"
   },
   "engines": {

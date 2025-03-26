@@ -21,11 +21,14 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'index.html'))
 
-  // Show the menu bar for debugging
-  mainWindow.setMenuBarVisibility(true)
+  // Only show menu bar and DevTools in development mode
+  const isDev = process.env.NODE_ENV === 'development'
+  mainWindow.setMenuBarVisibility(isDev)
 
-  // Open DevTools for debugging
-  mainWindow.webContents.openDevTools()
+  // Open DevTools only in development mode
+  if (isDev) {
+    mainWindow.webContents.openDevTools()
+  }
 }
 
 app.whenReady().then(createWindow)
