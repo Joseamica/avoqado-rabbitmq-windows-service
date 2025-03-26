@@ -1,17 +1,15 @@
-// scripts/install-service.js
-import { Service } from 'node-windows'
-import path from 'path'
-import { fileURLToPath } from 'url'
+// CommonJS version of install-service.js
+const { Service } = require('node-windows')
+const path = require('path')
 
-// Get directory
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+// __dirname is already available in CommonJS modules
+const rootPath = path.join(__dirname, '..', '..')
 
 // Service setup
 const svc = new Service({
   name: 'AvoqadoRabbitMQService',
   description: 'RabbitMQ to SQL Server communication service',
-  script: path.join(__dirname, '../src/index.js'),
+  script: path.join(rootPath, 'src', 'index.js'),
   nodeOptions: ['--no-warnings'],
   // Allow service to restart on failure
   grow: 0.5,

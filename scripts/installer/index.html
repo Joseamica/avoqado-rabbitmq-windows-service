@@ -1,0 +1,1027 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Avoqado POS Service Installer</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #f8f9fa;
+        color: #333;
+        font-size: 14px;
+      }
+      .container {
+        max-width: 700px;
+        margin: 0 auto;
+        padding: 15px;
+      }
+      header {
+        background-color: #2c3e50;
+        color: white;
+        padding: 15px;
+        text-align: center;
+        border-radius: 5px 5px 0 0;
+        margin-bottom: 15px;
+      }
+      .header-content {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .logo {
+        font-size: 22px;
+        font-weight: 700;
+        color: #3498db;
+        background-color: white;
+        padding: 5px 12px;
+        border-radius: 4px;
+        letter-spacing: -0.5px;
+      }
+      .version {
+        font-size: 12px;
+        opacity: 0.8;
+      }
+      h1 {
+        margin: 0;
+        font-size: 20px;
+      }
+      h2 {
+        font-size: 18px;
+        margin-top: 0;
+        color: #2c3e50;
+      }
+      .step-container {
+        display: flex;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        border-radius: 5px;
+      }
+      .step-sidebar {
+        width: 150px;
+        background-color: #f1f2f6;
+        padding: 10px;
+        border-radius: 5px 0 0 5px;
+        border-right: 1px solid #e6e6e6;
+      }
+      .step-content {
+        flex: 1;
+        padding: 20px;
+        background-color: white;
+        border-radius: 0 5px 5px 0;
+      }
+      .step {
+        margin-bottom: 8px;
+        padding: 8px;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 13px;
+        transition: background-color 0.2s;
+      }
+      .step.active {
+        background-color: #3498db;
+        color: white;
+      }
+      .step:hover:not(.active):not(.disabled) {
+        background-color: #e2e6ea;
+      }
+      .step.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .step.disabled:hover {
+        background-color: transparent;
+      }
+      .step-number {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        background-color: #6c757d;
+        color: white;
+        text-align: center;
+        line-height: 20px;
+        border-radius: 50%;
+        margin-right: 5px;
+        font-size: 12px;
+      }
+      .active .step-number {
+        background-color: white;
+        color: #3498db;
+      }
+      button {
+        background-color: #3498db;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: background-color 0.3s;
+        font-weight: 500;
+      }
+      button:hover:not(:disabled) {
+        background-color: #2980b9;
+      }
+      button:disabled {
+        background-color: #b0bec5;
+        cursor: not-allowed;
+      }
+      .navigation {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 20px;
+        padding-top: 15px;
+        border-top: 1px solid #e6e6e6;
+      }
+      #output,
+      .output {
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        padding: 10px;
+        height: 150px;
+        overflow-y: auto;
+        font-family: Consolas, Monaco, 'Andale Mono', monospace;
+        margin-bottom: 15px;
+        font-size: 12px;
+        white-space: pre-wrap;
+        border-radius: 4px;
+      }
+      .form-group {
+        margin-bottom: 15px;
+      }
+      .form-row {
+        display: flex;
+        gap: 15px;
+      }
+      .form-column {
+        flex: 1;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: 600;
+        font-size: 13px;
+        color: #2c3e50;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        box-sizing: border-box;
+        font-size: 13px;
+        transition: border-color 0.15s ease-in-out;
+      }
+      input:focus,
+      select:focus {
+        border-color: #3498db;
+        outline: 0;
+        box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25);
+      }
+      .hide {
+        display: none;
+      }
+      .form-action {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .form-action button {
+        white-space: nowrap;
+      }
+      .spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(0, 0, 0, 0.1);
+        border-radius: 50%;
+        border-top-color: #3498db;
+        animation: spin 1s ease-in-out infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .loading {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #666;
+        font-size: 13px;
+      }
+      .error-message {
+        color: #e74c3c;
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .checkbox-container {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: 15px;
+      }
+      .checkbox-container input[type='checkbox'] {
+        width: auto;
+        margin-right: 10px;
+        margin-top: 4px;
+      }
+      .checkbox-label {
+        font-size: 13px;
+        font-weight: normal;
+        line-height: 1.4;
+      }
+      .privacy-text {
+        height: 120px;
+        overflow-y: auto;
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        padding: 10px;
+        font-size: 12px;
+        margin-bottom: 15px;
+        border-radius: 4px;
+      }
+      .infobox {
+        background-color: #e9f7fe;
+        border-left: 4px solid #3498db;
+        padding: 12px;
+        margin-bottom: 15px;
+        border-radius: 0 4px 4px 0;
+      }
+      .infobox p {
+        margin: 0;
+        color: #2c3e50;
+      }
+      .success-icon {
+        font-size: 48px;
+        color: #2ecc71;
+        text-align: center;
+        margin-bottom: 15px;
+      }
+      .completion-details {
+        text-align: center;
+      }
+      .completion-details h3 {
+        font-size: 18px;
+        margin-top: 0;
+        margin-bottom: 15px;
+      }
+      .completion-details ul {
+        list-style-type: none;
+        padding-left: 0;
+      }
+      .completion-details li {
+        margin-bottom: 10px;
+      }
+      .button-row {
+        display: flex;
+        gap: 10px;
+      }
+      .danger-button {
+        background-color: #e74c3c;
+      }
+      .danger-button:hover:not(:disabled) {
+        background-color: #c0392b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <div class="header-content">
+          <div class="logo">Avoqado</div>
+          <h1>POS Service Setup</h1>
+          <div class="version">Version 1.0.0</div>
+        </div>
+      </header>
+
+      <div class="step-container">
+        <div class="step-sidebar">
+          <div class="step active" data-step="welcome"><span class="step-number">1</span> License Agreement</div>
+          <div class="step" data-step="setup"><span class="step-number">2</span> Database Configuration</div>
+          <div class="step" data-step="database"><span class="step-number">3</span> Database Setup</div>
+          <div class="step" data-step="install"><span class="step-number">4</span> Service Installation</div>
+          <div class="step" data-step="finish"><span class="step-number">5</span> Complete</div>
+        </div>
+
+        <div class="step-content">
+          <!-- Welcome Screen -->
+          <div id="welcome-step">
+            <h2>License Agreement</h2>
+
+            <div class="infobox">
+              <p>Thank you for choosing Avoqado POS. This setup wizard will guide you through installing and configuring the Avoqado POS Service.</p>
+            </div>
+
+            <p>The Avoqado POS Service establishes a secure connection between your Point of Sale system and Avoqado's cloud services, enabling enhanced functionality and real-time synchronization.</p>
+
+            <div class="form-group">
+              <label>Privacy Policy and Terms of Service</label>
+              <div class="privacy-text">
+                <p><strong>Privacy Policy and Terms of Service</strong></p>
+                <p>By installing the Avoqado POS Service, you agree to the collection and processing of certain data required for the service to function properly. This includes:</p>
+                <ul>
+                  <li>Database connection information</li>
+                  <li>POS transaction data</li>
+                  <li>Venue identification information</li>
+                </ul>
+                <p>
+                  All data is transmitted securely and stored in accordance with industry best practices. For more details, please visit
+                  <a href="https://www.avoqado.com/privacy" target="_blank">www.avoqado.com/privacy</a>.
+                </p>
+                <p>This software is licensed, not sold. Your use of this software is subject to the Avoqado License Agreement.</p>
+              </div>
+            </div>
+
+            <div class="checkbox-container">
+              <input type="checkbox" id="accept-privacy" />
+              <label for="accept-privacy" class="checkbox-label">I have read and agree to the Privacy Policy and Terms of Service</label>
+            </div>
+
+            <div id="privacy-error" class="error-message hide">You must accept the Privacy Policy and Terms of Service to continue.</div>
+          </div>
+
+          <!-- Setup Screen -->
+          <div id="setup-step" class="hide">
+            <h2>Database Configuration</h2>
+
+            <div id="setup-form">
+              <form id="config-form">
+                <div class="form-group">
+                  <label for="venueId">Venue ID:</label>
+                  <input type="text" id="venueId" name="venueId" value="default-venue" required />
+                </div>
+
+                <div class="form-group">
+                  <label for="configType">Database connection type:</label>
+                  <select id="configType" name="configType">
+                    <option value="details">Enter connection details individually</option>
+                    <option value="string">Enter a full connection string</option>
+                  </select>
+                </div>
+
+                <div id="details-fields">
+                  <div class="form-row">
+                    <div class="form-column">
+                      <div class="form-group">
+                        <label for="dbServer">Database server address:</label>
+                        <input type="text" id="dbServer" name="dbServer" value="localhost" />
+                        <div id="dbServerError" class="error-message hide"></div>
+                      </div>
+                    </div>
+                    <div class="form-column">
+                      <div class="form-group">
+                        <label for="dbInstance">SQL Server instance:</label>
+                        <input type="text" id="dbInstance" name="dbInstance" value="NATIONALSOFT" placeholder="Leave empty if default" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="form-row">
+                    <div class="form-column">
+                      <div class="form-group">
+                        <label for="dbUser">Database username:</label>
+                        <input type="text" id="dbUser" name="dbUser" value="sa" />
+                        <div id="dbUserError" class="error-message hide"></div>
+                      </div>
+                    </div>
+                    <div class="form-column">
+                      <div class="form-group">
+                        <label for="dbPassword">Database password:</label>
+                        <input type="password" id="dbPassword" name="dbPassword" />
+                        <div id="dbPasswordError" class="error-message hide"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="form-group">
+                    <div class="form-action">
+                      <label for="dbName">Database name:</label>
+                      <button type="button" id="fetch-databases-btn">Find Databases</button>
+                    </div>
+                    <select id="dbName" name="dbName" required>
+                      <option value="avo">avo</option>
+                    </select>
+                    <div id="dbNameError" class="error-message hide"></div>
+                  </div>
+                </div>
+
+                <div id="string-field" class="hide">
+                  <div class="form-group">
+                    <label for="connectionString">Connection string:</label>
+                    <input type="text" id="connectionString" name="connectionString" placeholder="e.g. Server=myServer;Database=myDB;User Id=myUser;Password=myPassword;" />
+                  </div>
+                </div>
+
+                <!-- <div class="form-row">
+                  <div class="form-column">
+                    <div class="form-group">
+                      <label for="rabbitmqUrl">RabbitMQ connection URL:</label>
+                      <input type="text" id="rabbitmqUrl" name="rabbitmqUrl" value="amqps://wkdeleat:E-37pD2qqZfeEzOoZ1VwnREE2oUqKnr8@moose.rmq.cloudamqp.com/wkdeleat" />
+                    </div>
+                  </div>
+                </div> -->
+
+                <!-- <div class="form-row">
+                  <div class="form-column">
+                    <div class="form-group">
+                      <label for="requestQueue">Request queue name:</label>
+                      <input type="text" id="requestQueue" name="requestQueue" value="operations_queue" />
+                    </div>
+                  </div>
+                  <div class="form-column">
+                    <div class="form-group">
+                      <label for="responseQueue">Response queue name:</label>
+                      <input type="text" id="responseQueue" name="responseQueue" value="responses_queue" />
+                    </div>
+                  </div>
+                </div> -->
+
+                <div class="form-group">
+                  <label>
+                    <input type="checkbox" id="testConnections" name="testConnections" checked />
+                    Test database and RabbitMQ connections
+                  </label>
+                </div>
+              </form>
+            </div>
+
+            <div id="setup-output" class="output"></div>
+
+            <button id="save-config-btn">Save Configuration</button>
+          </div>
+
+          <!-- Database Screen -->
+          <div id="database-step" class="hide">
+            <h2>Database Setup</h2>
+            <p>This step will enable Change Tracking on your SQL Server database.</p>
+            <p>Make sure your database server is running and accessible.</p>
+
+            <div id="database-output" class="output"></div>
+
+            <button id="run-db-setup-btn">Run Database Setup</button>
+          </div>
+
+          <!-- Install Screen -->
+          <div id="install-step" class="hide">
+            <h2>Service Installation</h2>
+            <p>The Windows service will run in the background and handle communication between your POS and Avoqado's cloud.</p>
+
+            <div id="install-output" class="output"></div>
+
+            <div class="button-row">
+              <button id="install-service-btn">Install Service</button>
+              <button id="uninstall-service-btn" class="danger-button">Uninstall Service</button>
+            </div>
+
+            <div class="infobox" style="margin-top: 15px; background-color: #fff3cd; border-left-color: #ffc107">
+              <p>
+                <strong>Note:</strong> The uninstall button will remove the Avoqado POS Service from your system. If the service is not installed, you'll be notified. Administrator privileges are required for both
+                installation and uninstallation.
+              </p>
+            </div>
+          </div>
+
+          <!-- Finish Screen -->
+          <div id="finish-step" class="hide">
+            <h2>Installation Complete</h2>
+
+            <div class="infobox">
+              <p>The Avoqado POS Service has been successfully installed and configured.</p>
+            </div>
+
+            <div class="success-icon">✓</div>
+
+            <div class="completion-details">
+              <p>The service is now running in the background and will start automatically when your computer restarts.</p>
+
+              <h3>Next Steps</h3>
+              <ul>
+                <li>Open your POS system and verify it can communicate with Avoqado cloud services</li>
+                <li>Visit the Avoqado Management Portal to complete your venue setup</li>
+                <li>For technical support, contact <strong>support@avoqado.com</strong></li>
+              </ul>
+
+              <div class="checkbox-container">
+                <input type="checkbox" id="launch-dashboard" checked />
+                <label for="launch-dashboard" class="checkbox-label">Launch Avoqado Dashboard after closing</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="navigation">
+            <button id="prev-btn" disabled>Previous</button>
+            <button id="next-btn">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Step navigation
+      const steps = ['welcome', 'setup', 'database', 'install', 'finish']
+      let currentStepIndex = 0
+
+      // Elements
+      const stepElements = document.querySelectorAll('.step')
+      const prevBtn = document.getElementById('prev-btn')
+      const nextBtn = document.getElementById('next-btn')
+      const setupOutput = document.getElementById('setup-output')
+      const databaseOutput = document.getElementById('database-output')
+      const installOutput = document.getElementById('install-output')
+      const saveConfigBtn = document.getElementById('save-config-btn')
+      const runDbSetupBtn = document.getElementById('run-db-setup-btn')
+      const installServiceBtn = document.getElementById('install-service-btn')
+      const uninstallServiceBtn = document.getElementById('uninstall-service-btn')
+      const configForm = document.getElementById('config-form')
+      const configTypeSelect = document.getElementById('configType')
+      const detailsFields = document.getElementById('details-fields')
+      const stringField = document.getElementById('string-field')
+      const fetchDatabasesBtn = document.getElementById('fetch-databases-btn')
+      const dbNameSelect = document.getElementById('dbName')
+      const acceptPrivacyCheckbox = document.getElementById('accept-privacy')
+      const privacyErrorMsg = document.getElementById('privacy-error')
+
+      // Error message elements
+      const dbServerError = document.getElementById('dbServerError')
+      const dbUserError = document.getElementById('dbUserError')
+      const dbPasswordError = document.getElementById('dbPasswordError')
+      const dbNameError = document.getElementById('dbNameError')
+
+      // Form input elements
+      const dbServerInput = document.getElementById('dbServer')
+      const dbUserInput = document.getElementById('dbUser')
+      const dbPasswordInput = document.getElementById('dbPassword')
+
+      // Script state tracking
+      let setupComplete = false
+      let dbSetupComplete = false
+      let installComplete = false
+      let dbConnectionSuccess = false // Track database connection success
+      let privacyAccepted = false // Track privacy policy acceptance
+
+      // Initialize
+      updateStepVisibility()
+
+      // Privacy policy acceptance
+      acceptPrivacyCheckbox.addEventListener('change', function () {
+        privacyAccepted = this.checked
+        if (this.checked) {
+          privacyErrorMsg.classList.add('hide')
+        }
+        updateNextButtonState()
+      })
+
+      // Update next button state based on current step
+      function updateNextButtonState() {
+        if (currentStepIndex === 0) {
+          nextBtn.disabled = !privacyAccepted
+        } else if (currentStepIndex === 1) {
+          nextBtn.disabled = !setupComplete
+        } else if (currentStepIndex === 2) {
+          nextBtn.disabled = !dbSetupComplete
+        } else if (currentStepIndex === 3) {
+          nextBtn.disabled = !installComplete
+        } else {
+          nextBtn.disabled = false
+        }
+      }
+
+      // Toggle connection details based on selection
+      configTypeSelect.addEventListener('change', function () {
+        if (this.value === 'details') {
+          detailsFields.classList.remove('hide')
+          stringField.classList.add('hide')
+        } else {
+          detailsFields.classList.add('hide')
+          stringField.classList.remove('hide')
+        }
+      })
+
+      // Helper function to show error messages
+      function showError(element, message) {
+        element.textContent = message
+        element.classList.remove('hide')
+      }
+
+      // Helper function to hide error messages
+      function hideError(element) {
+        element.classList.add('hide')
+      }
+
+      // Fetch databases button
+      fetchDatabasesBtn.addEventListener('click', () => {
+        // Clear existing error messages
+        hideError(dbServerError)
+        hideError(dbUserError)
+        hideError(dbPasswordError)
+        hideError(dbNameError)
+
+        // Validate inputs
+        let hasError = false
+
+        const server = dbServerInput.value.trim()
+        const user = dbUserInput.value.trim()
+        const password = dbPasswordInput.value
+
+        if (!server) {
+          showError(dbServerError, 'Please enter server address')
+          hasError = true
+        }
+
+        if (!user) {
+          showError(dbUserError, 'Please enter username')
+          hasError = true
+        }
+
+        if (!password) {
+          showError(dbPasswordError, 'Please enter password')
+          hasError = true
+        }
+
+        if (hasError) {
+          return
+        }
+
+        // All validation passed, proceed with fetching databases
+        const instance = document.getElementById('dbInstance').value.trim()
+
+        fetchDatabasesBtn.disabled = true
+
+        // Clear existing options - remove ALL options including the first one
+        while (dbNameSelect.options.length > 0) {
+          dbNameSelect.remove(0)
+        }
+
+        // Add a default/placeholder option
+        const defaultOption = document.createElement('option')
+        defaultOption.value = ''
+        defaultOption.textContent = '-- Fetching databases... --'
+        dbNameSelect.appendChild(defaultOption)
+
+        // Send request to fetch databases
+        window.electron.send('fetch-databases', {
+          server,
+          instance,
+          user,
+          password
+        })
+      })
+
+      // Add input listeners to hide error messages when user types
+      dbServerInput.addEventListener('input', () => hideError(dbServerError))
+      dbUserInput.addEventListener('input', () => hideError(dbUserError))
+      dbPasswordInput.addEventListener('input', () => hideError(dbPasswordError))
+      dbNameSelect.addEventListener('change', () => hideError(dbNameError))
+
+      // Save configuration button
+      saveConfigBtn.addEventListener('click', () => {
+        // Reset error messages
+        hideError(dbServerError)
+        hideError(dbUserError)
+        hideError(dbPasswordError)
+        hideError(dbNameError)
+
+        // Validate inputs
+        let hasError = false
+
+        // If we're using connection details, validate the database selection
+        if (configTypeSelect.value === 'details') {
+          // Check if database is selected (handle both empty value and placeholder option)
+          if (!dbNameSelect.value || (dbNameSelect.selectedIndex === 0 && dbNameSelect.options[0].disabled)) {
+            showError(dbNameError, 'Please select a database')
+            hasError = true
+          }
+        }
+
+        if (hasError) {
+          return
+        }
+
+        const formData = new FormData(configForm)
+        const config = {}
+
+        // Convert FormData to object
+        for (const [key, value] of formData.entries()) {
+          config[key] = value
+        }
+
+        // Handle checkbox
+        config.testConnections = formData.has('testConnections')
+
+        console.log('Config data:', config)
+        let outputEl = getCurrentOutputElement()
+        outputEl.innerHTML = 'Saving configuration...<br>'
+
+        // Reset database connection status
+        dbConnectionSuccess = false
+        setupComplete = false
+        nextBtn.disabled = true
+
+        // Send the configuration to the main process
+        window.electron.send('save-config', config)
+        saveConfigBtn.disabled = true
+
+        // Next button will be enabled when we receive 'script-complete' and have successful DB connection
+      })
+
+      // Database setup button
+      runDbSetupBtn.addEventListener('click', () => {
+        console.log('Run database setup button clicked')
+        let outputEl = getCurrentOutputElement()
+        outputEl.innerHTML = ''
+        window.electron.send('run-db-setup')
+        runDbSetupBtn.disabled = true
+      })
+
+      // Install service button
+      installServiceBtn.addEventListener('click', () => {
+        console.log('Install service button clicked')
+        let outputEl = getCurrentOutputElement()
+        outputEl.innerHTML = ''
+        window.electron.send('install-service')
+        installServiceBtn.disabled = true
+      })
+
+      // Uninstall service button
+      uninstallServiceBtn.addEventListener('click', () => {
+        if (
+          confirm(
+            'Are you sure you want to uninstall the Avoqado POS Service?\n\nThis will stop the service if it is running and permanently remove it from your system.\n\nNote: Administrator privileges will be required.'
+          )
+        ) {
+          console.log('Uninstall service button clicked')
+          let outputEl = getCurrentOutputElement()
+          outputEl.innerHTML = 'Preparing to uninstall service. Please confirm administrator privileges when prompted...<br>'
+          window.electron.send('uninstall-service')
+          uninstallServiceBtn.disabled = true
+        }
+      })
+
+      // Step navigation
+      prevBtn.addEventListener('click', () => {
+        if (currentStepIndex > 0) {
+          currentStepIndex--
+          updateStepVisibility()
+        }
+      })
+
+      nextBtn.addEventListener('click', () => {
+        if (currentStepIndex < steps.length - 1) {
+          // Check if current step is complete before allowing to proceed
+          if (currentStepIndex === 0 && !privacyAccepted) {
+            showError(privacyErrorMsg, 'You must accept the Privacy Policy and Terms of Service to continue.')
+            return
+          }
+
+          if (currentStepIndex === 1 && !setupComplete) {
+            alert('Please save the configuration first.')
+            return
+          }
+
+          if (currentStepIndex === 2 && !dbSetupComplete) {
+            alert('Please complete the database setup first.')
+            return
+          }
+
+          if (currentStepIndex === 3 && !installComplete) {
+            alert('Please install the service first.')
+            return
+          }
+
+          currentStepIndex++
+          updateStepVisibility()
+        }
+      })
+
+      stepElements.forEach((stepElement, index) => {
+        stepElement.addEventListener('click', () => {
+          // Don't allow navigating to steps that shouldn't be accessible yet
+          if (stepElement.classList.contains('disabled')) {
+            return
+          }
+
+          // Allow navigation to previous steps or the next available step
+          if (index <= currentStepIndex + 1) {
+            // If user tries to skip to step 2 without accepting privacy policy
+            if (index === 1 && !privacyAccepted) {
+              showError(privacyErrorMsg, 'You must accept the Privacy Policy and Terms of Service to continue.')
+              return
+            }
+
+            // If user tries to skip to step 3 without completing step 2
+            if (index === 2 && !setupComplete) {
+              alert('Please complete the configuration step first.')
+              return
+            }
+
+            // If user tries to skip to step 4 without completing step 3
+            if (index === 3 && !dbSetupComplete) {
+              alert('Please complete the database setup step first.')
+              return
+            }
+
+            currentStepIndex = index
+            updateStepVisibility()
+          }
+        })
+      })
+
+      // IPC listeners
+      window.electron.receive('script-output', (data) => {
+        console.log('Received script output:', data)
+        let outputEl = getCurrentOutputElement()
+        outputEl.innerHTML += data + '<br>'
+        outputEl.scrollTop = outputEl.scrollHeight
+
+        // Check for successful database connection
+        if (data.includes('✅ Database connection successful!')) {
+          dbConnectionSuccess = true
+        }
+
+        // Check for "service not installed" message
+        if (data.includes('No action needed - service is not installed')) {
+          // Re-enable the uninstall button
+          if (currentStepIndex === 3) {
+            uninstallServiceBtn.disabled = false
+            uninstallServiceBtn.textContent = 'Service Not Found'
+            setTimeout(() => {
+              uninstallServiceBtn.textContent = 'Uninstall Service'
+            }, 3000) // Reset text after 3 seconds
+          }
+        }
+      })
+
+      window.electron.receive('script-error', (data) => {
+        console.log('Received script error:', data)
+        let outputEl = getCurrentOutputElement()
+        outputEl.innerHTML += `<span style="color: red;">${data}</span><br>`
+        outputEl.scrollTop = outputEl.scrollHeight
+
+        // Re-enable buttons on error
+        if (currentStepIndex === 1) saveConfigBtn.disabled = false
+        if (currentStepIndex === 2) runDbSetupBtn.disabled = false
+        if (currentStepIndex === 3) installServiceBtn.disabled = false
+
+        // Re-enable fetch databases button
+        fetchDatabasesBtn.disabled = false
+
+        // If a database error occurs in step 1, mark as incomplete
+        if (currentStepIndex === 1 && data.includes('Database connection failed')) {
+          setupComplete = false
+          nextBtn.disabled = true
+        }
+      })
+
+      window.electron.receive('script-complete', (message) => {
+        console.log('Received script complete:', message)
+        let outputEl = getCurrentOutputElement()
+        outputEl.innerHTML += `<span style="color: green;">✓ ${message}</span><br>`
+        outputEl.scrollTop = outputEl.scrollHeight
+
+        // Mark step as complete
+        if (currentStepIndex === 1) {
+          // Only mark as complete if database connection was successful
+          if (dbConnectionSuccess) {
+            setupComplete = true
+            saveConfigBtn.disabled = false
+            saveConfigBtn.textContent = 'Configuration Saved ✓'
+            nextBtn.disabled = false
+          } else {
+            setupComplete = false
+            saveConfigBtn.disabled = false
+            nextBtn.disabled = true
+            outputEl.innerHTML += `<span style="color: red;">⚠️ Please correct the database connection issues before continuing.</span><br>`
+          }
+        }
+        if (currentStepIndex === 2) {
+          dbSetupComplete = true
+          runDbSetupBtn.disabled = false
+          runDbSetupBtn.textContent = 'Database Setup Complete ✓'
+          nextBtn.disabled = false
+        }
+        if (currentStepIndex === 3) {
+          installComplete = true
+          installServiceBtn.disabled = false
+          installServiceBtn.textContent = 'Service Installed ✓'
+          nextBtn.disabled = false
+        }
+        updateNextButtonState()
+      })
+
+      // Receive database list
+      window.electron.receive('database-list', (databases) => {
+        console.log('Received database list:', databases)
+
+        // Clear any existing options
+        while (dbNameSelect.options.length > 0) {
+          dbNameSelect.remove(0)
+        }
+
+        // If no databases found, show a message
+        if (databases.length === 0) {
+          const option = document.createElement('option')
+          option.value = ''
+          option.textContent = 'No databases found'
+          dbNameSelect.appendChild(option)
+        } else {
+          // Add a default prompt that is disabled
+          const defaultOption = document.createElement('option')
+          defaultOption.value = ''
+          defaultOption.textContent = '-- Select a database --'
+          defaultOption.disabled = true
+          defaultOption.selected = true
+          dbNameSelect.appendChild(defaultOption)
+
+          // Add each database to the select element
+          databases.forEach((db) => {
+            const option = document.createElement('option')
+            option.value = db.name
+            option.textContent = db.name
+            dbNameSelect.appendChild(option)
+          })
+
+          // Ensure the user has to make a selection
+          dbNameSelect.required = true
+        }
+
+        // Re-enable the button
+        fetchDatabasesBtn.disabled = false
+      })
+
+      function updateStepVisibility() {
+        // Update step indicators
+        stepElements.forEach((el, i) => {
+          if (i === currentStepIndex) {
+            el.classList.add('active')
+          } else {
+            el.classList.remove('active')
+          }
+
+          // Disable/enable steps based on completion status
+          el.classList.remove('disabled')
+
+          // Step 2 (index 1) requires privacy acceptance
+          if (i >= 1 && !privacyAccepted) {
+            el.classList.add('disabled')
+          }
+
+          // Step 3 (index 2) requires step 2 to be complete
+          if (i === 2 && !setupComplete) {
+            el.classList.add('disabled')
+          }
+
+          // Step 4 (index 3) requires step 3 to be complete
+          if (i === 3 && !dbSetupComplete) {
+            el.classList.add('disabled')
+          }
+
+          // Step 5 (index 4) requires step 4 to be complete
+          if (i === 4 && !installComplete) {
+            el.classList.add('disabled')
+          }
+        })
+
+        // Show current step content, hide others
+        steps.forEach((step) => {
+          const stepElement = document.getElementById(`${step}-step`)
+          if (steps[currentStepIndex] === step) {
+            stepElement.classList.remove('hide')
+          } else {
+            stepElement.classList.add('hide')
+          }
+        })
+
+        // Update navigation buttons
+        prevBtn.disabled = currentStepIndex === 0
+        updateNextButtonState()
+
+        if (currentStepIndex === steps.length - 1) {
+          nextBtn.textContent = 'Finish'
+          nextBtn.addEventListener('click', function onFinishClick() {
+            window.close()
+            nextBtn.removeEventListener('click', onFinishClick)
+          })
+        } else {
+          nextBtn.textContent = 'Next'
+        }
+      }
+
+      // Function to get the current output element based on the current step
+      function getCurrentOutputElement() {
+        if (currentStepIndex === 1) return setupOutput
+        if (currentStepIndex === 2) return databaseOutput
+        if (currentStepIndex === 3) return installOutput
+        return setupOutput // Default fallback
+      }
+
+      // Log that the page has loaded
+      console.log('Page has loaded successfully')
+    </script>
+  </body>
+</html>

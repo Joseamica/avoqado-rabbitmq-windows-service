@@ -8,8 +8,15 @@
     "dev": "nodemon src/index.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "install-service": "node scripts/install-service.js",
-    "uninstall-service": "node scripts/uninstall-service.js",
+    "setup": "node scripts/installer/setup.cjs",
+    "setup-db": "node scripts/installer/setup-db.cjs",
+    "install-service": "node scripts/installer/install-service.cjs",
+    "uninstall-service": "node scripts/installer/uninstall-service.cjs",
+    "build": "node scripts/installer/build.js",
+    "electron": "electron scripts/installer/main.cjs",
+    "download-icon": "node scripts/installer/download-icon.js",
+    "package": "npm run download-icon && electron-builder",
+    "build-installer": "node scripts/installer/build-electron.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -18,23 +25,78 @@
     "mssql",
     "pos"
   ],
+  "pkg": {
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "scripts/dist",
+    "assets": [
+      "scripts/**/*",
+      "src/**/*",
+      "node_modules/**/*",
+      ".env.example"
+    ],
+    "bin": "scripts/installer/wrapper.js"
+  },
+  "build": {
+    "appId": "com.avoqado.pos-service-installer",
+    "productName": "Avoqado POS Service Installer",
+    "directories": {
+      "output": "dist/electron-build"
+    },
+    "files": [
+      "scripts/installer/**/*",
+      "scripts/sql/**/*",
+      "node_modules/**/*",
+      "src/**/*",
+      "scripts/setup.cjs",
+      "scripts/setup-db.cjs",
+      "scripts/install-service.cjs",
+      "scripts/uninstall-service.cjs",
+      ".env.example"
+    ],
+    "extraMetadata": {
+      "main": "scripts/installer/main.cjs"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "scripts/installer/assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "installerIcon": "scripts/installer/assets/icon.ico",
+      "uninstallerIcon": "scripts/installer/assets/icon.ico",
+      "installerHeaderIcon": "scripts/installer/assets/icon.ico"
+    }
+  },
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
     "amqplib": "^0.10.5",
     "dotenv": "^16.4.7",
+    "inquirer": "^8.2.4",
     "mssql": "^11.0.1",
     "node-windows": "^1.0.0-beta.8"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
+    "electron": "^29.2.0",
+    "electron-builder": "^24.13.3",
     "eslint": "^9.22.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-prettier": "^5.2.3",
     "globals": "^15.15.0",
     "nodemon": "^3.1.9",
+    "pkg": "^5.8.1",
     "prettier": "^3.5.3"
   },
   "engines": {
