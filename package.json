@@ -12,11 +12,11 @@
     "setup-db": "node scripts/installer/setup-db.cjs",
     "install-service": "node scripts/installer/install-service.cjs",
     "uninstall-service": "node scripts/installer/uninstall-service.cjs",
-    "build": "node scripts/installer/build.js",
+    "build": "node scripts/installer/build-for-terminal-installation",
     "electron": "electron scripts/installer/main.cjs",
     "download-icon": "node scripts/installer/download-icon.js",
     "package": "node scripts/installer/download-icon.js && electron-builder --win portable --config.forceCodeSigning=false",
-    "build-installer": "node scripts/installer/download-icon.js && node scripts/installer/fix-installer-icon.js && electron-builder --win nsis --config.forceCodeSigning=false",
+    "build-installer": "node scripts/installer/download-icon.js &&  electron-builder --win nsis --config.forceCodeSigning=false",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -97,6 +97,7 @@
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-prettier": "^5.2.3",
+    "fs-extra": "^11.3.0",
     "globals": "^15.15.0",
     "nodemon": "^3.1.9",
     "pkg": "^5.8.1",

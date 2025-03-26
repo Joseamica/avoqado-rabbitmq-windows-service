@@ -1,4 +1,4 @@
-// CommonJS version of main.js for Electron
+// CommonJS version of main.cjs for Electron
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs') // Regular fs for sync methods like existsSync
@@ -7,11 +7,13 @@ const { execSync, spawn } = require('child_process')
 const sql = require('mssql')
 
 let mainWindow
+const iconPath = path.join(__dirname, '.', 'assets', 'icon.ico')
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
