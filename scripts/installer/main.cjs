@@ -1,4 +1,4 @@
-// CommonJS version of main.cjs for Electron
+// main-app.cjs - Main entry point for the installed application
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs') // Regular fs for sync methods like existsSync
@@ -6,30 +6,117 @@ const fsPromises = require('fs').promises // Promise-based fs for async methods
 const { execSync, spawn } = require('child_process')
 const sql = require('mssql')
 
+// Set up error handling
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error)
+  if (mainWindow) {
+    mainWindow.webContents.send('script-error', `Application Error: ${error.message}`)
+  }
+})
+
+// Determine if we're running in production or development
+const isProduction = !process.defaultApp && !process.env.NODE_ENV?.includes('dev')
+console.log(`Running in ${isProduction ? 'production' : 'development'} mode`)
+
+// Define paths for different environments
 let mainWindow
-const iconPath = path.join(__dirname, '.', 'assets', 'icon.ico')
+let userDataPath
+let configFilePath
+let resourcesPath
+
+// Set up paths based on environment
+if (isProduction) {
+  // In production/installed mode
+  userDataPath = app.getPath('userData')
+  configFilePath = path.join(userDataPath, '.env')
+  resourcesPath = process.resourcesPath
+} else {
+  // In development mode
+  userDataPath = app.getPath('userData')
+  configFilePath = path.join(path.resolve(__dirname, '..', '..'), '.env')
+  resourcesPath = path.resolve(__dirname, '..', '..')
+}
+
+console.log('User data path:', userDataPath)
+console.log('Config file path:', configFilePath)
+console.log('Resources path:', resourcesPath)
+
+// Icon path - look in different locations based on environment
+let iconPath
+if (isProduction) {
+  iconPath = path.join(resourcesPath, 'scripts', 'installer', 'assets', 'icon.ico')
+} else {
+  iconPath = path.join(__dirname, 'assets', 'icon.ico')
+}
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
-    icon: iconPath,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false
+  try {
+    console.log('Creating main window...')
+
+    mainWindow = new BrowserWindow({
+      width: 800,
+      height: 600,
+      icon: iconPath,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    })
+
+    mainWindow.loadFile(path.join(__dirname, 'index.html')).catch((error) => {
+      console.error('Failed to load HTML file:', error)
+    })
+
+    // Show menu bar only in development mode
+    mainWindow.setMenuBarVisibility(!isProduction)
+
+    // Open DevTools only in development mode
+    if (!isProduction) {
+      mainWindow.webContents.openDevTools()
     }
-  })
 
-  mainWindow.loadFile(path.join(__dirname, 'index.html'))
+    // After window is created, check if configuration exists
+    checkConfigurationExists()
+  } catch (error) {
+    console.error('Failed to create window:', error)
+  }
+}
 
-  // Only show menu bar and DevTools in development mode
-  const isDev = process.env.NODE_ENV === 'development'
-  mainWindow.setMenuBarVisibility(isDev)
+// Check if configuration exists and notify renderer
+function checkConfigurationExists() {
+  if (!fs.existsSync(configFilePath)) {
+    console.log('Configuration file not found, setup needed:', configFilePath)
 
-  // Open DevTools only in development mode
-  if (isDev) {
-    mainWindow.webContents.openDevTools()
+    // Create the userData directory if it doesn't exist (for first run)
+    if (!fs.existsSync(path.dirname(configFilePath))) {
+      fs.mkdirSync(path.dirname(configFilePath), { recursive: true })
+    }
+
+    // Copy .env.example if needed
+    const exampleEnvPath = path.join(resourcesPath, '.env.example')
+    if (fs.existsSync(exampleEnvPath)) {
+      try {
+        fs.copyFileSync(exampleEnvPath, path.join(userDataPath, '.env.example'))
+        console.log('Copied example .env file to user data directory')
+      } catch (error) {
+        console.error('Error copying example config:', error)
+      }
+    }
+
+    // Let renderer know configuration is needed
+    if (mainWindow) {
+      setTimeout(() => {
+        mainWindow.webContents.send('configuration-status', { exists: false })
+      }, 1000) // Small delay to ensure renderer is ready
+    }
+  } else {
+    console.log('Configuration file found:', configFilePath)
+    if (mainWindow) {
+      setTimeout(() => {
+        mainWindow.webContents.send('configuration-status', { exists: true })
+      }, 1000) // Small delay to ensure renderer is ready
+    }
   }
 }
 
@@ -133,12 +220,10 @@ ipcMain.on('save-config', async (event, config) => {
     envContent += `REQUEST_QUEUE=${HARD_CODED_REQUEST_QUEUE}\n`
     envContent += `RESPONSE_QUEUE=${HARD_CODED_RESPONSE_QUEUE}\n`
 
-    // Write the .env file to the project root
-    const rootPath = path.resolve(__dirname, '..', '..')
-    const envPath = path.join(rootPath, '.env')
-
-    await fsPromises.writeFile(envPath, envContent)
-    event.reply('script-output', `Configuration saved to ${envPath}`)
+    // Write the .env file to the correct location based on environment
+    console.log(`Writing configuration to: ${configFilePath}`)
+    await fsPromises.writeFile(configFilePath, envContent)
+    event.reply('script-output', `Configuration saved to ${configFilePath}`)
 
     // Test connections if requested
     let dbConnected = false
@@ -235,10 +320,23 @@ ipcMain.on('uninstall-service', (event) => {
 
 // Helper function to run scripts with progress feedback
 function runScriptWithProgress(scriptName, event) {
-  // Try to find the script with .cjs or .js extension
-  let scriptPath = path.join(__dirname, `${scriptName}.cjs`)
-  if (!fs.existsSync(scriptPath)) {
-    scriptPath = path.join(__dirname, `${scriptName}.js`)
+  // Try different paths based on environment
+  let scriptPath
+
+  if (isProduction) {
+    // First check in the app.asar
+    scriptPath = path.join(__dirname, `${scriptName}.cjs`)
+
+    // If not found, check in resources directory (extraResources)
+    if (!fs.existsSync(scriptPath)) {
+      scriptPath = path.join(resourcesPath, 'scripts', 'installer', `${scriptName}.cjs`)
+    }
+  } else {
+    // In development
+    scriptPath = path.join(__dirname, `${scriptName}.cjs`)
+    if (!fs.existsSync(scriptPath)) {
+      scriptPath = path.join(__dirname, `${scriptName}.js`)
+    }
   }
 
   console.log(`Attempting to run script: ${scriptPath}`)
@@ -250,20 +348,21 @@ function runScriptWithProgress(scriptName, event) {
     console.error(`Script not found: ${scriptPath}`)
     event.reply('script-error', `Script not found: ${scriptPath}`)
 
-    // Try to find where the scripts might be
-    const parentDir = path.dirname(__dirname)
-    console.log(`Looking in parent directory: ${parentDir}`)
-    try {
-      const files = fs.readdirSync(parentDir)
-      console.log(`Files in parent directory: ${files.join(', ')}`)
-      event.reply('script-output', `Files in parent directory: ${files.join(', ')}`)
+    // Look for files in possible locations
+    const locations = [__dirname, path.join(resourcesPath, 'scripts', 'installer'), path.join(resourcesPath, 'scripts')]
 
-      // Also check this directory
-      const thisFiles = fs.readdirSync(__dirname)
-      console.log(`Files in current directory: ${thisFiles.join(', ')}`)
-      event.reply('script-output', `Files in current directory: ${thisFiles.join(', ')}`)
-    } catch (err) {
-      console.error(`Error reading directory: ${err.message}`)
+    for (const location of locations) {
+      try {
+        if (fs.existsSync(location)) {
+          const files = fs.readdirSync(location)
+          console.log(`Files in ${location}: ${files.join(', ')}`)
+          event.reply('script-output', `Files in ${location}: ${files.join(', ')}`)
+        } else {
+          console.log(`Directory doesn't exist: ${location}`)
+        }
+      } catch (err) {
+        console.error(`Error reading directory ${location}: ${err.message}`)
+      }
     }
 
     return
@@ -272,10 +371,16 @@ function runScriptWithProgress(scriptName, event) {
   try {
     console.log(`Found script, executing: ${scriptPath}`)
 
-    // Run the script with Node.js
+    // Run the script with Node.js, passing environment variables
     const child = spawn('node', ['--no-warnings', scriptPath], {
       shell: true,
-      env: process.env
+      env: {
+        ...process.env,
+        APP_DATA_PATH: userDataPath,
+        APP_IS_PACKAGED: isProduction ? 'true' : 'false',
+        CONFIG_FILE_PATH: configFilePath,
+        RESOURCES_PATH: resourcesPath
+      }
     })
 
     child.stdout.on('data', (data) => {

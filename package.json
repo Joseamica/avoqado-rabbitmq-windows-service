@@ -1,8 +1,8 @@
 {
-  "name": "api",
+  "name": "avoqado-pos-service",
   "version": "1.0.0",
   "type": "module",
-  "main": "app.js",
+  "main": "scripts/installer/main-app.cjs",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
@@ -16,7 +16,7 @@
     "electron": "electron scripts/installer/main.cjs",
     "download-icon": "node scripts/installer/download-icon.js",
     "package": "node scripts/installer/download-icon.js && electron-builder --win portable --config.forceCodeSigning=false",
-    "build-installer": "node scripts/installer/download-icon.js &&  electron-builder --win nsis --config.forceCodeSigning=false",
+    "build-installer": "node scripts/installer/download-icon.js && electron-builder --win nsis --config.forceCodeSigning=false",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -49,11 +49,20 @@
       "scripts/sql/**/*",
       "node_modules/**/*",
       "src/**/*",
-      "scripts/setup.cjs",
-      "scripts/setup-db.cjs",
-      "scripts/install-service.cjs",
-      "scripts/uninstall-service.cjs",
       ".env.example"
+    ],
+    "extraResources": [
+      {
+        "from": "scripts/sql",
+        "to": "scripts/sql",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": ".env.example",
+        "to": ".env.example"
+      }
     ],
     "extraMetadata": {
       "main": "scripts/installer/main.cjs"
