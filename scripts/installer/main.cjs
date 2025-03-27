@@ -383,8 +383,7 @@ ipcMain.on('uninstall-service', (event) => {
   runScriptWithProgress('uninstall-service', event)
 })
 
-// ===== IMPROVED SCRIPT RUNNER =====
-// Enhanced with better path resolution, error handling, and environment variables
+// Replace the runScriptWithProgress function in main.cjs with this improved version
 function runScriptWithProgress(scriptName, event) {
   // Try different paths based on environment - enhanced with more possibilities
   const possiblePaths = [
@@ -429,8 +428,21 @@ function runScriptWithProgress(scriptName, event) {
     // Generate the NODE_PATH environment variable to help with module resolution
     const nodePaths = [path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules'), path.join(process.resourcesPath, 'node_modules'), path.dirname(process.execPath)].join(path.delimiter)
 
-    // ===== FIX 7: IMPROVE ENVIRONMENT VARIABLES =====
-    // Pass more detailed environment information to the child process
+    // Add paths to any installed service files
+    const servicePaths = [path.join(resourcesPath, 'src', 'index.js'), path.join(__dirname, '..', 'src', 'index.js'), path.join(__dirname, '..', '..', 'src', 'index.js')]
+
+    // Find the first existing service path
+    let serviceFilePath = null
+    for (const p of servicePaths) {
+      if (fs.existsSync(p)) {
+        serviceFilePath = p
+        break
+      }
+    }
+
+    console.log(`Service file path: ${serviceFilePath || 'Not found'}`)
+
+    // Pass improved environment information to the child process
     const child = spawn(process.execPath, ['--no-warnings', scriptPath], {
       shell: false, // Don't use shell - this avoids path quoting issues
       env: {
@@ -438,25 +450,32 @@ function runScriptWithProgress(scriptName, event) {
         APP_DATA_PATH: userDataPath,
         APP_IS_PACKAGED: isProduction ? 'true' : 'false',
         CONFIG_FILE_PATH: configFilePath,
-        APP_DATA_CONFIG_PATH: appDataConfigPath, // Add the AppData config path
+        APP_DATA_CONFIG_PATH: appDataConfigPath,
         RESOURCES_PATH: resourcesPath,
+        SERVICE_FILE_PATH: serviceFilePath || '',
         ELECTRON_RUN_AS_NODE: '1', // Force Node.js mode for child process
         NODE_PATH: nodePaths, // Add NODE_PATH to help resolve modules
-        SQL_SCRIPTS_PATH: path.join(resourcesPath, 'scripts', 'sql'), // Path to SQL scripts
-        HOME_DIR: os.homedir() // User's home directory for better path resolution
+        SQL_SCRIPTS_PATH: path.join(resourcesPath, 'scripts', 'sql'),
+        HOME_DIR: os.homedir(),
+        // Add service-specific information
+        SERVICE_NAME: 'AvoqadoRabbitMQService' // Use consistent service name
       }
     })
 
     child.stdout.on('data', (data) => {
-      const output = data.toString()
-      console.log(`Script stdout: ${output}`)
-      event.reply('script-output', output)
+      const output = data.toString().trim()
+      if (output) {
+        console.log(`Script stdout: ${output}`)
+        event.reply('script-output', output)
+      }
     })
 
     child.stderr.on('data', (data) => {
-      const error = data.toString()
-      console.error(`Script stderr: ${error}`)
-      event.reply('script-error', error)
+      const error = data.toString().trim()
+      if (error) {
+        console.error(`Script stderr: ${error}`)
+        event.reply('script-error', error)
+      }
     })
 
     child.on('error', (error) => {

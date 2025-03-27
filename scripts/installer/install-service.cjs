@@ -7,7 +7,7 @@ const rootPath = path.join(__dirname, '..', '..')
 
 // Service setup
 const svc = new Service({
-  name: 'AvoqadoRabbitMQService',
+  name: 'avoqadorabbitmqservice',
   description: 'RabbitMQ to SQL Server communication service',
   script: path.join(rootPath, 'src', 'index.js'),
   nodeOptions: ['--no-warnings'],
