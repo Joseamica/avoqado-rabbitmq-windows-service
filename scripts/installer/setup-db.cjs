@@ -1,4 +1,4 @@
-// Simplified setup-db.cjs with better error handling
+// Improved setup-db.cjs with better error handling and config finding
 const fs = require('fs')
 const path = require('path')
 const { execSync, spawn } = require('child_process')
@@ -22,27 +22,39 @@ let rootPath, sqlScriptPath, configPath
 
 // Check if we're running from the packaged app
 if (isPackaged) {
-  // In production, use environment variables set by main.cjs
-  rootPath = process.env.APP_DATA_PATH || path.join(__dirname, '..', '..')
-  configPath = process.env.CONFIG_FILE_PATH || path.join(rootPath, '.env')
+  // In production, use environment variables passed from main.cjs with fallbacks
+  const appDataPath = process.env.APP_DATA_PATH || path.join(os.homedir(), 'AppData', 'Roaming', 'avoqado-pos-service')
+  rootPath = appDataPath
+  configPath = process.env.CONFIG_FILE_PATH || path.join(appDataPath, '.env')
 
   // Look for SQL scripts in various locations
   const possibleSqlPaths = [
-    // First look in app.asar.unpacked
-    path.join(process.env.RESOURCES_PATH || process.resourcesPath, 'app.asar.unpacked', 'scripts', 'sql'),
-    // Then look in resources directory
+    // Try the SQL_SCRIPTS_PATH environment variable first
+    process.env.SQL_SCRIPTS_PATH,
+    // Then in resources directory
     path.join(process.env.RESOURCES_PATH || process.resourcesPath, 'scripts', 'sql'),
-    // Fallback to extraResources
-    path.join(process.env.RESOURCES_PATH || process.resourcesPath, 'scripts', 'sql')
-  ]
+    // Then in app.asar.unpacked
+    path.join(process.env.RESOURCES_PATH || process.resourcesPath, 'app.asar.unpacked', 'scripts', 'sql'),
+    // Fallback to a standard location
+    path.join(os.homedir(), 'AppData', 'Roaming', 'avoqado-pos-service', 'scripts', 'sql')
+  ].filter(Boolean) // Filter out undefined entries
 
   // Find the first path that exists
-  sqlScriptPath = possibleSqlPaths.find((p) => fs.existsSync(p))
+  sqlScriptPath = possibleSqlPaths.find((p) => {
+    try {
+      return fs.existsSync(p)
+    } catch (err) {
+      return false
+    }
+  })
 
   if (!sqlScriptPath) {
-    console.error('Could not find SQL scripts directory in any of the expected locations')
+    console.error('Could not find SQL scripts directory in any of the expected locations:')
+    possibleSqlPaths.forEach((p) => console.log(`- ${p}`))
+
     // Create a default path
     sqlScriptPath = path.join(process.env.RESOURCES_PATH || process.resourcesPath, 'scripts', 'sql')
+    console.log(`Will use default path: ${sqlScriptPath}`)
 
     // Create the directory if it doesn't exist
     if (!fs.existsSync(sqlScriptPath)) {
@@ -69,16 +81,52 @@ console.log(`Root path: ${rootPath}`)
 console.log(`Config path: ${configPath}`)
 console.log(`SQL script path: ${sqlScriptPath}`)
 
-// Load .env file if it exists
-if (fs.existsSync(configPath) && dotenv) {
-  try {
-    dotenv.config({ path: configPath })
-    console.log('Loaded configuration from:', configPath)
-  } catch (err) {
-    console.warn('Error loading custom .env file:', err.message)
+// Function to find the configuration file in multiple possible locations
+function findConfigFile() {
+  const possiblePaths = [
+    configPath, // Primary path (from environment)
+    process.env.CONFIG_FILE_PATH, // Direct environment variable
+    process.env.APP_DATA_CONFIG_PATH, // AppData config path from main.cjs
+    path.join(os.homedir(), 'AppData', 'Roaming', 'avoqado-pos-service', '.env'), // AppData path
+    path.join(process.resourcesPath || '', '.env'), // Application resources
+    path.join(rootPath, '.env'), // Root path
+    path.join(__dirname, '..', '..', '.env') // Development path
+  ].filter(Boolean) // Remove undefined entries
+
+  console.log('Searching for configuration file in these locations:')
+  possiblePaths.forEach((p) => console.log(`- ${p}`))
+
+  for (const p of possiblePaths) {
+    try {
+      if (fs.existsSync(p)) {
+        console.log(`✅ Found configuration file at: ${p}`)
+        return p
+      }
+    } catch (err) {
+      // Ignore errors and continue searching
+    }
+  }
+
+  console.error('❌ Configuration file not found in any location')
+  return null
+}
+
+// Use this function to find the actual config path
+const actualConfigPath = findConfigFile()
+if (actualConfigPath) {
+  configPath = actualConfigPath // Update the config path to the one found
+
+  // Now load the config using dotenv
+  if (dotenv) {
+    try {
+      dotenv.config({ path: configPath })
+      console.log(`Loaded configuration from: ${configPath}`)
+    } catch (err) {
+      console.warn(`Error loading config: ${err.message}`)
+    }
   }
 } else {
-  console.warn('No configuration file found at:', configPath)
+  console.error('No configuration file found. Please run the setup step first.')
 }
 
 // Create database connection configuration
@@ -105,13 +153,24 @@ function createDbConfig() {
     return config
   }
 
+  // Check if server has format "server\instance"
+  let server = process.env.DB_SERVER || 'localhost'
+  let instanceName = process.env.DB_INSTANCE || undefined
+
+  if (server.includes('\\')) {
+    const parts = server.split('\\')
+    server = parts[0]
+    instanceName = parts[1]
+    console.log(`Detected server with instance: ${server}\\${instanceName}`)
+  }
+
   // Otherwise, build from individual parts
   return {
     user: process.env.DB_USER || 'sa',
     password: process.env.DB_PASSWORD || '', // Use empty string instead of undefined
     database: process.env.DB_DATABASE || 'avo',
-    server: process.env.DB_SERVER || 'localhost',
-    instanceName: process.env.DB_INSTANCE || undefined,
+    server: server,
+    instanceName: instanceName,
     options: {
       encrypt: false,
       trustServerCertificate: true,
@@ -121,7 +180,7 @@ function createDbConfig() {
   }
 }
 
-// SQL script filenames and their dependencies
+// SQL script filenames and their dependencies (existing definition)
 const sqlFiles = [
   {
     filename: 'setup-change-tracking.sql',

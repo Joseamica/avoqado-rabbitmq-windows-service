@@ -1,4 +1,4 @@
-// main-app.cjs - Main entry point for the installed application
+// main.cjs - Main entry point for the installed application
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs') // Regular fs for sync methods like existsSync
@@ -64,8 +64,24 @@ if (isProduction) {
   resourcesPath = path.resolve(__dirname, '..', '..')
 }
 
+// ===== FIX 3: ADD APP DATA PATH FOR CONSISTENT CONFIG LOCATION =====
+// Create a dedicated directory in AppData for storing the config
+const appDataConfigDir = path.join(os.homedir(), 'AppData', 'Roaming', 'avoqado-pos-service')
+if (!fs.existsSync(appDataConfigDir)) {
+  try {
+    fs.mkdirSync(appDataConfigDir, { recursive: true })
+    console.log(`Created app data directory: ${appDataConfigDir}`)
+  } catch (err) {
+    console.warn(`Could not create app data directory: ${err.message}`)
+  }
+}
+
+// Add AppData path as an alternative config location
+const appDataConfigPath = path.join(appDataConfigDir, '.env')
+
 console.log('User data path:', userDataPath)
 console.log('Config file path:', configFilePath)
+console.log('App data config path:', appDataConfigPath)
 console.log('Resources path:', resourcesPath)
 
 // Icon path - look in different locations based on environment
@@ -113,8 +129,13 @@ function createWindow() {
 
 // Check if configuration exists and notify renderer
 function checkConfigurationExists() {
-  if (!fs.existsSync(configFilePath)) {
-    console.log('Configuration file not found, setup needed:', configFilePath)
+  // ===== FIX 4: CHECK MULTIPLE CONFIG LOCATIONS =====
+  // Check in both primary and AppData locations
+  const configExists = fs.existsSync(configFilePath) || fs.existsSync(appDataConfigPath)
+
+  if (!configExists) {
+    console.log('Configuration file not found, setup needed')
+    console.log(`Checked locations: ${configFilePath}, ${appDataConfigPath}`)
 
     // Create the userData directory if it doesn't exist (for first run)
     if (!fs.existsSync(path.dirname(configFilePath))) {
@@ -139,7 +160,15 @@ function checkConfigurationExists() {
       }, 1000) // Small delay to ensure renderer is ready
     }
   } else {
-    console.log('Configuration file found:', configFilePath)
+    // ===== FIX 5: USE FIRST AVAILABLE CONFIG =====
+    // Use the first config file found
+    if (fs.existsSync(configFilePath)) {
+      console.log(`Configuration file found: ${configFilePath}`)
+    } else {
+      console.log(`Configuration file found in AppData: ${appDataConfigPath}`)
+      // We'll let the child process handle this via path search
+    }
+
     if (mainWindow) {
       setTimeout(() => {
         mainWindow.webContents.send('configuration-status', { exists: true })
@@ -248,10 +277,18 @@ ipcMain.on('save-config', async (event, config) => {
     envContent += `REQUEST_QUEUE=${HARD_CODED_REQUEST_QUEUE}\n`
     envContent += `RESPONSE_QUEUE=${HARD_CODED_RESPONSE_QUEUE}\n`
 
-    // Write the .env file to the correct location based on environment
+    // ===== FIX 6: SAVE CONFIG IN BOTH LOCATIONS =====
+    // Write the .env file to both the userData and AppData locations
     console.log(`Writing configuration to: ${configFilePath}`)
     await fsPromises.writeFile(configFilePath, envContent)
+
+    // Also save to AppData for better script access
+    console.log(`Also writing configuration to: ${appDataConfigPath}`)
+    await fsPromises.mkdir(path.dirname(appDataConfigPath), { recursive: true })
+    await fsPromises.writeFile(appDataConfigPath, envContent)
+
     event.reply('script-output', `Configuration saved to ${configFilePath}`)
+    event.reply('script-output', `Also saved to ${appDataConfigPath} for better accessibility`)
 
     // Test connections if requested
     let dbConnected = false
@@ -392,8 +429,8 @@ function runScriptWithProgress(scriptName, event) {
     // Generate the NODE_PATH environment variable to help with module resolution
     const nodePaths = [path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules'), path.join(process.resourcesPath, 'node_modules'), path.dirname(process.execPath)].join(path.delimiter)
 
-    // ===== USE ELECTRON'S EXECUTABLE WITH ENVIRONMENT VARIABLES =====
-    // This ensures better compatibility with the packaged app
+    // ===== FIX 7: IMPROVE ENVIRONMENT VARIABLES =====
+    // Pass more detailed environment information to the child process
     const child = spawn(process.execPath, ['--no-warnings', scriptPath], {
       shell: false, // Don't use shell - this avoids path quoting issues
       env: {
@@ -401,9 +438,12 @@ function runScriptWithProgress(scriptName, event) {
         APP_DATA_PATH: userDataPath,
         APP_IS_PACKAGED: isProduction ? 'true' : 'false',
         CONFIG_FILE_PATH: configFilePath,
+        APP_DATA_CONFIG_PATH: appDataConfigPath, // Add the AppData config path
         RESOURCES_PATH: resourcesPath,
         ELECTRON_RUN_AS_NODE: '1', // Force Node.js mode for child process
-        NODE_PATH: nodePaths // Add NODE_PATH to help resolve modules
+        NODE_PATH: nodePaths, // Add NODE_PATH to help resolve modules
+        SQL_SCRIPTS_PATH: path.join(resourcesPath, 'scripts', 'sql'), // Path to SQL scripts
+        HOME_DIR: os.homedir() // User's home directory for better path resolution
       }
     })
 
