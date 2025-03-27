@@ -346,8 +346,8 @@ ipcMain.on('uninstall-service', (event) => {
   runScriptWithProgress('uninstall-service', event)
 })
 
-// ===== FIX 3: IMPROVED SCRIPT RUNNER =====
-// Enhanced with better path resolution and error handling
+// ===== IMPROVED SCRIPT RUNNER =====
+// Enhanced with better path resolution, error handling, and environment variables
 function runScriptWithProgress(scriptName, event) {
   // Try different paths based on environment - enhanced with more possibilities
   const possiblePaths = [
@@ -389,7 +389,10 @@ function runScriptWithProgress(scriptName, event) {
   try {
     console.log(`Found script, executing: ${scriptPath}`)
 
-    // ===== FIX: USE ELECTRON'S EXECUTABLE WITH ENVIRONMENT VARIABLES =====
+    // Generate the NODE_PATH environment variable to help with module resolution
+    const nodePaths = [path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules'), path.join(process.resourcesPath, 'node_modules'), path.dirname(process.execPath)].join(path.delimiter)
+
+    // ===== USE ELECTRON'S EXECUTABLE WITH ENVIRONMENT VARIABLES =====
     // This ensures better compatibility with the packaged app
     const child = spawn(process.execPath, ['--no-warnings', scriptPath], {
       shell: false, // Don't use shell - this avoids path quoting issues
@@ -399,7 +402,8 @@ function runScriptWithProgress(scriptName, event) {
         APP_IS_PACKAGED: isProduction ? 'true' : 'false',
         CONFIG_FILE_PATH: configFilePath,
         RESOURCES_PATH: resourcesPath,
-        ELECTRON_RUN_AS_NODE: '1' // Force Node.js mode for child process
+        ELECTRON_RUN_AS_NODE: '1', // Force Node.js mode for child process
+        NODE_PATH: nodePaths // Add NODE_PATH to help resolve modules
       }
     })
 

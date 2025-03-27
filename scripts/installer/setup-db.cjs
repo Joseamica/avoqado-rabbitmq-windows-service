@@ -1,61 +1,27 @@
-// CommonJS version of setup-db.js
-try {
-  // First ensure dependencies are installed
-  require('./ensure-dependencies')
-} catch (error) {
-  console.error('Failed to ensure dependencies:', error.message)
-  // Continue execution - we'll handle missing modules during import
-}
+// Simplified setup-db.cjs with better error handling
+const fs = require('fs')
+const path = require('path')
+const { execSync, spawn } = require('child_process')
+const os = require('os')
 
-// Now try to load required modules with error handling
-let fs, path, sql, dotenv
+console.log('Starting database setup with diagnostic mode...')
 
-try {
-  fs = require('fs')
-} catch (error) {
-  console.error('Failed to load fs module:', error.message)
-  process.exit(1)
-}
-
-try {
-  path = require('path')
-} catch (error) {
-  console.error('Failed to load path module:', error.message)
-  process.exit(1)
-}
-
+// Load dotenv if available
+let dotenv
 try {
   dotenv = require('dotenv')
-} catch (error) {
-  console.error('Failed to load dotenv:', error.message)
-  console.error('Trying to continue without dotenv...')
-}
-
-// Only load SQL after ensuring dependencies
-try {
-  sql = require('mssql')
-} catch (error) {
-  console.error('Failed to load mssql module:', error.message)
-  if (error.code === 'MODULE_NOT_FOUND') {
-    console.error('This could be due to missing dependencies. Please run:')
-    console.error('npm install debug ms mssql dotenv tedious')
-  }
-  process.exit(1)
-}
-
-// Get fsPromises after ensuring fs is loaded
-const fsPromises = fs.promises
-
-// Load environment variables
-if (dotenv) {
   dotenv.config()
+  console.log('Loaded environment variables from .env file')
+} catch (err) {
+  console.warn('dotenv not available, continuing without .env file support')
 }
 
 // Get paths based on environment
+const isPackaged = process.resourcesPath && process.resourcesPath.includes('app.asar')
 let rootPath, sqlScriptPath, configPath
 
 // Check if we're running from the packaged app
-if (process.env.APP_IS_PACKAGED === 'true') {
+if (isPackaged) {
   // In production, use environment variables set by main.cjs
   rootPath = process.env.APP_DATA_PATH || path.join(__dirname, '..', '..')
   configPath = process.env.CONFIG_FILE_PATH || path.join(rootPath, '.env')
@@ -80,7 +46,12 @@ if (process.env.APP_IS_PACKAGED === 'true') {
 
     // Create the directory if it doesn't exist
     if (!fs.existsSync(sqlScriptPath)) {
-      fs.mkdirSync(sqlScriptPath, { recursive: true })
+      try {
+        fs.mkdirSync(sqlScriptPath, { recursive: true })
+        console.log(`Created SQL scripts directory at ${sqlScriptPath}`)
+      } catch (err) {
+        console.warn(`Could not create SQL directory: ${err.message}`)
+      }
     }
   }
 
@@ -100,48 +71,68 @@ console.log(`SQL script path: ${sqlScriptPath}`)
 
 // Load .env file if it exists
 if (fs.existsSync(configPath) && dotenv) {
-  dotenv.config({ path: configPath })
-  console.log('Loaded configuration from:', configPath)
+  try {
+    dotenv.config({ path: configPath })
+    console.log('Loaded configuration from:', configPath)
+  } catch (err) {
+    console.warn('Error loading custom .env file:', err.message)
+  }
 } else {
   console.warn('No configuration file found at:', configPath)
 }
 
 // Create database connection configuration
 function createDbConfig() {
-  // If a full connection string is provided, use it
+  // If a full connection string is provided, parse it
   if (process.env.DB_CONNECTION_STRING) {
-    return {
-      connectionString: process.env.DB_CONNECTION_STRING
-    }
+    // Simple parser for connection string
+    const connStr = process.env.DB_CONNECTION_STRING
+    const config = {}
+
+    // Simple parsing of connection string parts
+    connStr.split(';').forEach((pair) => {
+      const [key, value] = pair.split('=')
+      if (key && value) {
+        const k = key.trim().toLowerCase()
+        if (k === 'server') config.server = value.trim()
+        else if (k === 'user id' || k === 'uid') config.user = value.trim()
+        else if (k === 'password' || k === 'pwd') config.password = value.trim()
+        else if (k === 'database' || k === 'initial catalog') config.database = value.trim()
+        else if (k === 'instance name') config.instanceName = value.trim()
+      }
+    })
+
+    return config
   }
 
   // Otherwise, build from individual parts
-  const config = {
+  return {
     user: process.env.DB_USER || 'sa',
-    password: process.env.DB_PASSWORD,
+    password: process.env.DB_PASSWORD || '', // Use empty string instead of undefined
     database: process.env.DB_DATABASE || 'avo',
     server: process.env.DB_SERVER || 'localhost',
+    instanceName: process.env.DB_INSTANCE || undefined,
     options: {
       encrypt: false,
       trustServerCertificate: true,
-      connectTimeout: 30000, // Increased timeout
-      requestTimeout: 30000 // Increased request timeout
+      connectTimeout: 30000,
+      requestTimeout: 30000
     }
   }
-
-  // Add instance name if provided
-  if (process.env.DB_INSTANCE) {
-    config.options.instanceName = process.env.DB_INSTANCE
-  }
-
-  return config
 }
 
 // SQL script filenames and their dependencies
 const sqlFiles = [
   {
     filename: 'setup-change-tracking.sql',
-    description: 'Setting up change tracking'
+    description: 'Setting up change tracking',
+    fallbackSQL: `
+      IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_databases WHERE database_id = DB_ID())
+      BEGIN
+          ALTER DATABASE [${process.env.DB_DATABASE || 'avo'}] SET CHANGE_TRACKING = ON (CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON)
+      END
+      GO
+    `
   },
   {
     filename: 'create-ticketevents.sql',
@@ -151,6 +142,8 @@ const sqlFiles = [
       GO
       SET QUOTED_IDENTIFIER ON
       GO
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[TicketEvents]') AND type in (N'U'))
+      BEGIN
       CREATE TABLE [dbo].[TicketEvents](
         [ID] [int] IDENTITY(1,1) NOT NULL,
         [Folio] [nvarchar](100) NOT NULL,
@@ -183,12 +176,22 @@ const sqlFiles = [
         [ID] ASC
       )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
       ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+      END
       GO
-      ALTER TABLE [dbo].[TicketEvents] ADD  DEFAULT ((0)) FOR [IsSplitOperation]
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DF_TicketEvents_IsSplitOperation]') AND type = 'D')
+      BEGIN
+      ALTER TABLE [dbo].[TicketEvents] ADD CONSTRAINT [DF_TicketEvents_IsSplitOperation] DEFAULT ((0)) FOR [IsSplitOperation]
+      END
       GO
-      ALTER TABLE [dbo].[TicketEvents] ADD  DEFAULT ((0)) FOR [IsProcessed]
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DF_TicketEvents_IsProcessed]') AND type = 'D')
+      BEGIN
+      ALTER TABLE [dbo].[TicketEvents] ADD CONSTRAINT [DF_TicketEvents_IsProcessed] DEFAULT ((0)) FOR [IsProcessed]
+      END
       GO
-      ALTER TABLE [dbo].[TicketEvents] ADD  DEFAULT (getdate()) FOR [CreateDate]
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DF_TicketEvents_CreateDate]') AND type = 'D')
+      BEGIN
+      ALTER TABLE [dbo].[TicketEvents] ADD CONSTRAINT [DF_TicketEvents_CreateDate] DEFAULT (getdate()) FOR [CreateDate]
+      END
       GO
     `
   },
@@ -200,6 +203,8 @@ const sqlFiles = [
       GO
       SET QUOTED_IDENTIFIER ON
       GO
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ProductEvents]') AND type in (N'U'))
+      BEGIN
       CREATE TABLE [dbo].[ProductEvents](
         [ID] [int] IDENTITY(1,1) NOT NULL,
         [Folio] [nvarchar](100) NULL,
@@ -234,8 +239,12 @@ const sqlFiles = [
         [ID] ASC
       )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
       ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+      END
       GO
-      ALTER TABLE [dbo].[ProductEvents] ADD  DEFAULT (getdate()) FOR [CreateDate]
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DF_ProductEvents_CreateDate]') AND type = 'D')
+      BEGIN
+      ALTER TABLE [dbo].[ProductEvents] ADD CONSTRAINT [DF_ProductEvents_CreateDate] DEFAULT (getdate()) FOR [CreateDate]
+      END
       GO
     `
   },
@@ -247,6 +256,8 @@ const sqlFiles = [
       GO
       SET QUOTED_IDENTIFIER ON
       GO
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[PaymentEvents]') AND type in (N'U'))
+      BEGIN
       CREATE TABLE [dbo].[PaymentEvents](
         [ID] [int] IDENTITY(1,1) NOT NULL,
         [Folio] [nvarchar](100) NULL,
@@ -274,8 +285,12 @@ const sqlFiles = [
         [ID] ASC
       )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
       ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+      END
       GO
-      ALTER TABLE [dbo].[PaymentEvents] ADD  DEFAULT (getdate()) FOR [CreateDate]
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DF_PaymentEvents_CreateDate]') AND type = 'D')
+      BEGIN
+      ALTER TABLE [dbo].[PaymentEvents] ADD CONSTRAINT [DF_PaymentEvents_CreateDate] DEFAULT (getdate()) FOR [CreateDate]
+      END
       GO
     `
   },
@@ -287,6 +302,8 @@ const sqlFiles = [
       GO
       SET QUOTED_IDENTIFIER ON
       GO
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[TurnoEvents]') AND type in (N'U'))
+      BEGIN
       CREATE TABLE [dbo].[TurnoEvents](
         [ID] [int] IDENTITY(1,1) NOT NULL,
         [IdTurnoInterno] [int] NULL,
@@ -312,8 +329,12 @@ const sqlFiles = [
         [ID] ASC
       )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
       ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+      END
       GO
-      ALTER TABLE [dbo].[TurnoEvents] ADD  DEFAULT (getdate()) FOR [CreateDate]
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DF_TurnoEvents_CreateDate]') AND type = 'D')
+      BEGIN
+      ALTER TABLE [dbo].[TurnoEvents] ADD CONSTRAINT [DF_TurnoEvents_CreateDate] DEFAULT (getdate()) FOR [CreateDate]
+      END
       GO
     `
   },
@@ -325,6 +346,8 @@ const sqlFiles = [
       GO
       SET QUOTED_IDENTIFIER ON
       GO
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ShiftClosureState]') AND type in (N'U'))
+      BEGIN
       CREATE TABLE [dbo].[ShiftClosureState](
         [Id] [int] IDENTITY(1,1) NOT NULL,
         [ShiftId] [int] NOT NULL,
@@ -337,10 +360,17 @@ const sqlFiles = [
         [Id] ASC
       )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
       ) ON [PRIMARY]
+      END
       GO
-      ALTER TABLE [dbo].[ShiftClosureState] ADD  DEFAULT (getdate()) FOR [StartTime]
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DF_ShiftClosureState_StartTime]') AND type = 'D')
+      BEGIN
+      ALTER TABLE [dbo].[ShiftClosureState] ADD CONSTRAINT [DF_ShiftClosureState_StartTime] DEFAULT (getdate()) FOR [StartTime]
+      END
       GO
-      ALTER TABLE [dbo].[ShiftClosureState] ADD  DEFAULT ('ACTIVE') FOR [Status]
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DF_ShiftClosureState_Status]') AND type = 'D')
+      BEGIN
+      ALTER TABLE [dbo].[ShiftClosureState] ADD CONSTRAINT [DF_ShiftClosureState_Status] DEFAULT ('ACTIVE') FOR [Status]
+      END
       GO
     `
   },
@@ -352,6 +382,8 @@ const sqlFiles = [
       GO
       SET QUOTED_IDENTIFIER ON
       GO
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ShiftLog]') AND type in (N'U'))
+      BEGIN
       CREATE TABLE [dbo].[ShiftLog](
         [Id] [int] IDENTITY(1,1) NOT NULL,
         [EventTime] [datetime] NOT NULL,
@@ -364,286 +396,909 @@ const sqlFiles = [
         [Id] ASC
       )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
       ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+      END
       GO
-      ALTER TABLE [dbo].[ShiftLog] ADD  DEFAULT (getdate()) FOR [EventTime]
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DF_ShiftLog_EventTime]') AND type = 'D')
+      BEGIN
+      ALTER TABLE [dbo].[ShiftLog] ADD CONSTRAINT [DF_ShiftLog_EventTime] DEFAULT (getdate()) FOR [EventTime]
+      END
       GO
     `
   },
-  // Triggers - these should be executed after tables are created
   {
     filename: 'trigger-chequeactualizado.sql',
     description: 'Creating trgChequeActualizado trigger',
-    depends: ['create-ticketevents.sql']
+    fallbackSQL: `
+      SET ANSI_NULLS ON
+      GO
+      SET QUOTED_IDENTIFIER ON
+      GO
+      IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgChequeActualizado]'))
+      BEGIN
+      EXEC dbo.sp_executesql @statement = N'
+      CREATE TRIGGER [dbo].[trgChequeActualizado]
+      ON [dbo].[ChequeMaestro]
+      AFTER UPDATE
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+          
+          -- Insert into TicketEvents table
+          INSERT INTO TicketEvents (
+              Folio, TableNumber, OrderNumber, EventType, OperationType,
+              ShiftId, IsSplitOperation, WaiterId, WaiterName, Total,
+              Descuento, UniqueCode, IsProcessed
+          )
+          SELECT 
+              i.NumeroTicket,
+              i.Nombre AS TableNumber,
+              i.OrdenNumerica AS OrderNumber,
+              ''TICKET'' AS EventType,
+              CASE 
+                  WHEN i.Activo = 0 AND i.Impreso = 1 THEN ''CLOSE''
+                  WHEN i.Activo = 1 THEN ''UPDATE''
+                  ELSE ''UNKNOWN''
+              END AS OperationType,
+              i.IdTurno AS ShiftId,
+              0 AS IsSplitOperation,
+              i.Usuario AS WaiterId,
+              u.Nombre AS WaiterName,
+              i.SubTotal AS Total,
+              i.Descuento,
+              CONCAT(i.NumeroTicket, ''-'', CONVERT(VARCHAR(20), GETDATE(), 112), ''-'', CONVERT(VARCHAR(20), GETDATE(), 108)) AS UniqueCode,
+              0 AS IsProcessed
+          FROM inserted i
+          LEFT JOIN Usuario u ON i.Usuario = u.IdUsuario
+          WHERE i.NumeroTicket IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM TicketEvents te 
+                  WHERE te.Folio = i.NumeroTicket 
+                  AND te.OperationType = CASE 
+                      WHEN i.Activo = 0 AND i.Impreso = 1 THEN ''CLOSE''
+                      WHEN i.Activo = 1 THEN ''UPDATE''
+                      ELSE ''UNKNOWN''
+                  END
+              );
+      END
+      ' 
+      END
+      GO
+    `
   },
   {
     filename: 'trigger-comandaactualizado.sql',
     description: 'Creating trgComandaActualizado trigger',
-    depends: ['create-productevents.sql']
+    fallbackSQL: `
+      SET ANSI_NULLS ON
+      GO
+      SET QUOTED_IDENTIFIER ON
+      GO
+      IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgComandaActualizado]'))
+      BEGIN
+      EXEC dbo.sp_executesql @statement = N'
+      CREATE TRIGGER [dbo].[trgComandaActualizado]
+      ON [dbo].[ChequeComanda]
+      AFTER INSERT, UPDATE
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+          
+          -- Información de las comandas insertadas o actualizadas
+          INSERT INTO ProductEvents (
+              Folio, TableNumber, OrderNumber, Status, WaiterId, WaiterName,
+              IdProducto, NombreProducto, Movimiento, Cantidad, Precio, Descuento,
+              Hora, Modificador, Clasificacion, OperationType, ShiftId, UniqueCode
+          )
+          SELECT 
+              cm.NumeroTicket AS Folio,
+              m.Nombre AS TableNumber,
+              cm.OrdenNumerica AS OrderNumber,
+              cm.Estado AS Status,
+              cm.Usuario AS WaiterId,
+              u.Nombre AS WaiterName,
+              i.IdProducto,
+              p.Descripcion AS NombreProducto,
+              cm.Movimiento,
+              i.Cantidad,
+              i.Precio,
+              i.Descuento,
+              CONVERT(VARCHAR(8), GETDATE(), 108) AS Hora,
+              i.Modificador,
+              p.Agrupacion AS Clasificacion,
+              CASE 
+                  WHEN i.Cancelado = 1 THEN ''CANCEL''
+                  ELSE ''ADD''
+              END AS OperationType,
+              cm.IdTurno AS ShiftId,
+              CONCAT(cm.NumeroTicket, ''-'', i.IdProducto, ''-'', CONVERT(VARCHAR(20), GETDATE(), 112), ''-'', CONVERT(VARCHAR(20), GETDATE(), 108)) AS UniqueCode
+          FROM inserted i
+          INNER JOIN ChequeComanda cm ON i.OrderId = cm.OrderID
+          LEFT JOIN ChequeMaestro m ON cm.NumeroTicket = m.NumeroTicket
+          LEFT JOIN Producto p ON i.IdProducto = p.IdProducto
+          LEFT JOIN Usuario u ON cm.Usuario = u.IdUsuario
+          WHERE cm.NumeroTicket IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM ProductEvents pe
+                  WHERE pe.Folio = cm.NumeroTicket
+                  AND pe.IdProducto = i.IdProducto
+                  AND pe.Cantidad = i.Cantidad
+                  AND pe.Precio = i.Precio
+                  AND pe.OperationType = CASE 
+                      WHEN i.Cancelado = 1 THEN ''CANCEL''
+                      ELSE ''ADD''
+                  END
+              );
+      END
+      ' 
+      END
+      GO
+    `
   },
   {
     filename: 'trigger-pagoactualizado.sql',
     description: 'Creating trgChequePagoActualizado trigger',
-    depends: ['create-paymentevents.sql']
+    fallbackSQL: `
+      SET ANSI_NULLS ON
+      GO
+      SET QUOTED_IDENTIFIER ON
+      GO
+      IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgChequePagoActualizado]'))
+      BEGIN
+      EXEC dbo.sp_executesql @statement = N'
+      CREATE TRIGGER [dbo].[trgChequePagoActualizado]
+      ON [dbo].[ChequePago]
+      AFTER INSERT, UPDATE
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+          
+          -- Información de los pagos insertados o actualizados
+          INSERT INTO PaymentEvents (
+              Folio, IdFormaDePago, Importe, Propina, Referencia,
+              TableNumber, OrderNumber, Status, OperationType
+          )
+          SELECT 
+              cm.NumeroTicket AS Folio,
+              i.IdFormaDePago,
+              i.Importe,
+              i.Propina,
+              i.Referencia,
+              m.Nombre AS TableNumber,
+              cm.OrdenNumerica AS OrderNumber,
+              cm.Estado AS Status,
+              CASE 
+                  WHEN i.Activo = 0 THEN ''CANCEL''
+                  ELSE ''PAYMENT''
+              END AS OperationType
+          FROM inserted i
+          INNER JOIN ChequeMaestro cm ON i.NumeroTicket = cm.NumeroTicket
+          LEFT JOIN Estacion m ON cm.Estacion = m.IdEstacion
+          WHERE cm.NumeroTicket IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM PaymentEvents pe
+                  WHERE pe.Folio = cm.NumeroTicket
+                  AND pe.IdFormaDePago = i.IdFormaDePago
+                  AND pe.Importe = i.Importe
+                  AND pe.OperationType = CASE 
+                      WHEN i.Activo = 0 THEN ''CANCEL''
+                      ELSE ''PAYMENT''
+                  END
+              );
+      END
+      ' 
+      END
+      GO
+    `
   },
   {
     filename: 'trigger-turnoactualizado.sql',
     description: 'Creating trgTurnosActualizado trigger',
-    depends: ['create-turnoevents.sql']
+    fallbackSQL: `
+      SET ANSI_NULLS ON
+      GO
+      SET QUOTED_IDENTIFIER ON
+      GO
+      IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgTurnosActualizado]'))
+      BEGIN
+      EXEC dbo.sp_executesql @statement = N'
+      CREATE TRIGGER [dbo].[trgTurnosActualizado]
+      ON [dbo].[Turnos]
+      AFTER UPDATE
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+          
+          IF UPDATE(Cerrado)
+          BEGIN
+              -- Insertamos los turnos cerrados
+              INSERT INTO TurnoEvents (
+                  IdTurnoInterno, IdTurno, Fondo, Apertura, Cierre,
+                  Cajero, Status, OperationType
+              )
+              SELECT 
+                  i.IdTurno AS IdTurnoInterno,
+                  i.IdTurnoGlobal AS IdTurno,
+                  i.Fondo,
+                  i.Apertura,
+                  i.Cierre,
+                  u.Nombre AS Cajero,
+                  CASE 
+                      WHEN i.Cerrado = 1 THEN ''CLOSED''
+                      ELSE ''OPEN''
+                  END AS Status,
+                  CASE 
+                      WHEN i.Cerrado = 1 AND d.Cerrado = 0 THEN ''CLOSE''
+                      ELSE ''UPDATE''
+                  END AS OperationType
+              FROM inserted i
+              INNER JOIN deleted d ON i.IdTurno = d.IdTurno
+              LEFT JOIN Usuario u ON i.Usuario = u.IdUsuario
+              WHERE i.Cerrado = 1 AND d.Cerrado = 0;
+              
+              -- Actualizamos los valores de efectivo, tarjeta, vales, etc.
+              UPDATE te SET
+                  Efectivo = (
+                      SELECT SUM(cp.Importe)
+                      FROM ChequePago cp
+                      WHERE cp.IdTurno = te.IdTurnoInterno
+                      AND cp.IdFormaDePago = 1 -- Efectivo
+                      AND cp.Activo = 1
+                  ),
+                  Tarjeta = (
+                      SELECT SUM(cp.Importe)
+                      FROM ChequePago cp
+                      WHERE cp.IdTurno = te.IdTurnoInterno
+                      AND cp.IdFormaDePago = 2 -- Tarjeta
+                      AND cp.Activo = 1
+                  ),
+                  Vales = (
+                      SELECT SUM(cp.Importe)
+                      FROM ChequePago cp
+                      WHERE cp.IdTurno = te.IdTurnoInterno
+                      AND cp.IdFormaDePago = 3 -- Vales
+                      AND cp.Activo = 1
+                  ),
+                  Credito = (
+                      SELECT SUM(cp.Importe)
+                      FROM ChequePago cp
+                      WHERE cp.IdTurno = te.IdTurnoInterno
+                      AND cp.IdFormaDePago = 4 -- Crédito
+                      AND cp.Activo = 1
+                  ),
+                  CorteEnviado = 0,
+                  UpdateDate = GETDATE()
+              FROM TurnoEvents te
+              INNER JOIN inserted i ON te.IdTurnoInterno = i.IdTurno
+              WHERE i.Cerrado = 1 AND te.OperationType = ''CLOSE'';
+          END
+      END
+      ' 
+      END
+      GO
+    `
   },
   {
     filename: 'trigger-turnoclosuredetect.sql',
     description: 'Creating trgTurnosShiftClosureDetect trigger',
-    depends: ['create-shiftclosurestate.sql', 'create-shiftlog.sql']
+    fallbackSQL: `
+      SET ANSI_NULLS ON
+      GO
+      SET QUOTED_IDENTIFIER ON
+      GO
+      IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgTurnosShiftClosureDetect]'))
+      BEGIN
+      EXEC dbo.sp_executesql @statement = N'
+      CREATE TRIGGER [dbo].[trgTurnosShiftClosureDetect]
+      ON [dbo].[Turnos]
+      AFTER UPDATE
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+          
+          -- Detect when shift closure process starts
+          IF UPDATE(Cerrado)
+          BEGIN
+              -- Insert a new ShiftClosureState record for shifts that are being closed
+              INSERT INTO ShiftClosureState (ShiftId, StartTime, Status, CreatedBy)
+              SELECT 
+                  i.IdTurno,
+                  GETDATE(),
+                  ''ACTIVE'' AS Status,
+                  u.Nombre
+              FROM inserted i
+              INNER JOIN deleted d ON i.IdTurno = d.IdTurno
+              LEFT JOIN Usuario u ON i.Usuario = u.IdUsuario
+              WHERE i.Cerrado = 1 AND d.Cerrado = 0
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ShiftClosureState scs 
+                      WHERE scs.ShiftId = i.IdTurno AND scs.Status = ''ACTIVE''
+                  );
+              
+              -- Log shift closure start event
+              INSERT INTO ShiftLog (EventType, ShiftId, Details)
+              SELECT 
+                  ''SHIFT_CLOSURE_STARTED'',
+                  i.IdTurno,
+                  ''Shift closure process started by '' + ISNULL(u.Nombre, ''Unknown'')
+              FROM inserted i
+              INNER JOIN deleted d ON i.IdTurno = d.IdTurno
+              LEFT JOIN Usuario u ON i.Usuario = u.IdUsuario
+              WHERE i.Cerrado = 1 AND d.Cerrado = 0;
+          END
+      END
+      ' 
+      END
+      GO
+    `
   },
   {
     filename: 'trigger-turnoclosing.sql',
     description: 'Creating trgTurnosShiftClosing trigger',
-    depends: ['create-shiftlog.sql']
+    fallbackSQL: `
+      SET ANSI_NULLS ON
+      GO
+      SET QUOTED_IDENTIFIER ON
+      GO
+      IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgTurnosShiftClosing]'))
+      BEGIN
+      EXEC dbo.sp_executesql @statement = N'
+      CREATE TRIGGER [dbo].[trgTurnosShiftClosing]
+      ON [dbo].[Turnos]
+      AFTER UPDATE
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+          
+          -- Check if any open tickets remain for the shift being closed
+          IF UPDATE(Cerrado)
+          BEGIN
+              -- Find shifts that are being closed
+              DECLARE @ClosingShifts TABLE (ShiftId INT);
+              
+              INSERT INTO @ClosingShifts
+              SELECT i.IdTurno
+              FROM inserted i
+              INNER JOIN deleted d ON i.IdTurno = d.IdTurno
+              WHERE i.Cerrado = 1 AND d.Cerrado = 0;
+              
+              -- Check for open tickets for each closing shift
+              DECLARE @OpenTickets TABLE (ShiftId INT, TicketCount INT);
+              
+              INSERT INTO @OpenTickets
+              SELECT 
+                  cs.ShiftId,
+                  COUNT(cm.NumeroTicket) AS OpenTicketCount
+              FROM @ClosingShifts cs
+              CROSS APPLY (
+                  SELECT cm.NumeroTicket
+                  FROM ChequeMaestro cm
+                  WHERE cm.IdTurno = cs.ShiftId
+                      AND cm.Activo = 1
+              ) AS cm
+              GROUP BY cs.ShiftId;
+              
+              -- Log warning for shifts with open tickets
+              INSERT INTO ShiftLog (EventType, ShiftId, Details)
+              SELECT 
+                  ''SHIFT_CLOSURE_WARNING'',
+                  ot.ShiftId,
+                  ''Shift is being closed with '' + CAST(ot.TicketCount AS VARCHAR) + '' open tickets''
+              FROM @OpenTickets ot
+              WHERE ot.TicketCount > 0;
+              
+              -- Log regular closing for shifts without open tickets
+              INSERT INTO ShiftLog (EventType, ShiftId, Details)
+              SELECT 
+                  ''SHIFT_CLOSING'',
+                  cs.ShiftId,
+                  ''Shift closure in progress''
+              FROM @ClosingShifts cs
+              LEFT JOIN @OpenTickets ot ON cs.ShiftId = ot.ShiftId
+              WHERE ot.ShiftId IS NULL;
+          END
+      END
+      ' 
+      END
+      GO
+    `
   },
   {
     filename: 'trigger-turnoclosurecomplete.sql',
     description: 'Creating trgTurnosShiftClosureComplete trigger',
-    depends: ['create-shiftclosurestate.sql', 'create-shiftlog.sql']
+    fallbackSQL: `
+      SET ANSI_NULLS ON
+      GO
+      SET QUOTED_IDENTIFIER ON
+      GO
+      IF NOT EXISTS (SELECT * FROM sys.triggers WHERE object_id = OBJECT_ID(N'[dbo].[trgTurnosShiftClosureComplete]'))
+      BEGIN
+      EXEC dbo.sp_executesql @statement = N'
+      CREATE TRIGGER [dbo].[trgTurnosShiftClosureComplete]
+      ON [dbo].[TurnoEvents]
+      AFTER INSERT
+      AS
+      BEGIN
+          SET NOCOUNT ON;
+          
+          -- Only process records related to shift closure
+          IF EXISTS (SELECT 1 FROM inserted WHERE OperationType = ''CLOSE'' AND Status = ''CLOSED'')
+          BEGIN
+              -- Mark the shift closure as complete
+              UPDATE scs
+              SET 
+                  scs.Status = ''COMPLETED'',
+                  scs.EndTime = GETDATE()
+              FROM ShiftClosureState scs
+              INNER JOIN inserted i ON scs.ShiftId = i.IdTurnoInterno
+              WHERE i.OperationType = ''CLOSE''
+                  AND i.Status = ''CLOSED''
+                  AND scs.Status = ''ACTIVE'';
+              
+              -- Log the completion
+              INSERT INTO ShiftLog (EventType, ShiftId, Details)
+              SELECT 
+                  ''SHIFT_CLOSURE_COMPLETED'',
+                  i.IdTurnoInterno,
+                  ''Shift closure process completed. Total amounts: Efectivo='' + 
+                      ISNULL(CAST(i.Efectivo AS VARCHAR), ''0'') + 
+                      '', Tarjeta='' + ISNULL(CAST(i.Tarjeta AS VARCHAR), ''0'') +
+                      '', Vales='' + ISNULL(CAST(i.Vales AS VARCHAR), ''0'') +
+                      '', Credito='' + ISNULL(CAST(i.Credito AS VARCHAR), ''0'')
+              FROM inserted i
+              WHERE i.OperationType = ''CLOSE''
+                  AND i.Status = ''CLOSED'';
+          END
+      END
+      ' 
+      END
+      GO
+    `
   }
 ]
 
-// Function to check if a table exists
-async function tableExists(pool, tableName) {
+// Function to check SQL Server connectivity
+async function checkSqlServerConnection(dbConfig) {
+  console.log('\n========== SQL SERVER CONNECTION TEST ==========')
+  console.log('Testing connection to SQL Server with these parameters:')
+  console.log(`Server: ${dbConfig.server}${dbConfig.instanceName ? '\\' + dbConfig.instanceName : ''}`)
+  console.log(`Database: ${dbConfig.database}`)
+  console.log(`User: ${dbConfig.user}`)
+  console.log(`Password: ${dbConfig.password ? '********' : '[EMPTY OR UNDEFINED]'}`)
+
+  // Check if sqlcmd is available
+  let sqlcmdAvailable = false
   try {
-    const result = await pool.request().query(`
-      SELECT COUNT(*) AS tableCount 
-      FROM INFORMATION_SCHEMA.TABLES 
-      WHERE TABLE_NAME = '${tableName}'
-    `)
-    return result.recordset[0].tableCount > 0
-  } catch (error) {
-    console.error(`Error checking if table ${tableName} exists:`, error.message)
-    return false
+    execSync('sqlcmd -?', { stdio: 'ignore' })
+    sqlcmdAvailable = true
+    console.log('\nSQLCMD utility is available')
+  } catch (err) {
+    console.log('\nSQLCMD utility is not available. Will attempt PowerShell SQL connection test.')
   }
-}
 
-// Function to check if a trigger exists
-async function triggerExists(pool, triggerName) {
-  try {
-    const result = await pool.request().query(`
-      SELECT COUNT(*) AS triggerCount 
-      FROM sys.triggers 
-      WHERE name = '${triggerName}'
-    `)
-    return result.recordset[0].triggerCount > 0
-  } catch (error) {
-    console.error(`Error checking if trigger ${triggerName} exists:`, error.message)
-    return false
-  }
-}
-
-// Function to check if a default constraint exists on a column
-async function defaultConstraintExists(pool, tableName, columnName) {
-  try {
-    const result = await pool.request().query(`
-      SELECT COUNT(*) AS constraintCount
-      FROM sys.default_constraints dc
-      JOIN sys.columns c ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
-      JOIN sys.tables t ON c.object_id = t.object_id
-      WHERE t.name = '${tableName}'
-      AND c.name = '${columnName}'
-    `)
-    return result.recordset[0].constraintCount > 0
-  } catch (error) {
-    console.error(`Error checking if default constraint exists for ${tableName}.${columnName}:`, error.message)
-    return false
-  }
-}
-
-// Extract the object name from a CREATE/ALTER statement
-function extractObjectName(sqlBatch) {
-  // Check for tables
-  const tableMatch = sqlBatch.match(/CREATE\s+TABLE\s+\[?dbo\]?\.\[?(\w+)\]?/i)
-  if (tableMatch) return { type: 'TABLE', name: tableMatch[1] }
-
-  // Check for triggers
-  const triggerMatch = sqlBatch.match(/CREATE\s+TRIGGER\s+\[?dbo\]?\.\[?(\w+)\]?/i)
-  if (triggerMatch) return { type: 'TRIGGER', name: triggerMatch[1] }
-
-  // Check for default constraints
-  const defaultMatch = sqlBatch.match(/ALTER\s+TABLE\s+\[?dbo\]?\.\[?(\w+)\]?\s+ADD\s+DEFAULT\s+.*\s+FOR\s+\[?(\w+)\]?/i)
-  if (defaultMatch) return { type: 'DEFAULT_CONSTRAINT', table: defaultMatch[1], column: defaultMatch[2] }
-
-  return { type: 'OTHER', name: null }
-}
-
-// Function to execute batches of SQL separated by GO with existence checking
-async function executeSqlBatches(pool, sqlContent) {
-  const batches = sqlContent.split(/\nGO\s*$/m)
-  let batchNumber = 0
-
-  for (const batch of batches) {
-    const trimmedBatch = batch.trim()
-    batchNumber++
-
-    if (!trimmedBatch) continue
-
-    // Check if this batch is a CREATE statement for a table or trigger or an ALTER adding a default
-    const objectInfo = extractObjectName(trimmedBatch)
-
-    let skipBatch = false
-
-    if (objectInfo.type === 'TABLE' && objectInfo.name) {
-      const exists = await tableExists(pool, objectInfo.name)
-      if (exists) {
-        console.log(`  Table [${objectInfo.name}] already exists, skipping creation`)
-        skipBatch = true
-      }
-    } else if (objectInfo.type === 'TRIGGER' && objectInfo.name) {
-      const exists = await triggerExists(pool, objectInfo.name)
-      if (exists) {
-        console.log(`  Trigger [${objectInfo.name}] already exists, skipping creation`)
-        skipBatch = true
-      }
-    } else if (objectInfo.type === 'DEFAULT_CONSTRAINT' && objectInfo.table && objectInfo.column) {
-      const exists = await defaultConstraintExists(pool, objectInfo.table, objectInfo.column)
-      if (exists) {
-        console.log(`  Default constraint for [${objectInfo.table}].[${objectInfo.column}] already exists, skipping`)
-        skipBatch = true
-      }
-    }
-
-    if (skipBatch) continue
-
-    // Execute the batch if we didn't decide to skip it
+  if (sqlcmdAvailable) {
     try {
-      await pool.request().batch(trimmedBatch)
-      console.log(`  Batch ${batchNumber}/${batches.length} executed successfully`)
-    } catch (error) {
-      console.error(`  Error executing batch ${batchNumber}:`, error.message)
-      // Log problematic batch during development (only first 100 chars to keep logs clean)
-      console.log(`  Problematic batch: ${trimmedBatch.substring(0, 100)}...`)
-      // Don't stop on errors - continue with next batch
-      console.log('  Continuing with next batch...')
-    }
-  }
-}
+      // Very simple connection test with sqlcmd
+      const sqlcmdArgs = `-S "${dbConfig.server}${dbConfig.instanceName ? '\\' + dbConfig.instanceName : ''}" -d "master" -U "${dbConfig.user}" -P "${dbConfig.password || ''}" -Q "SELECT @@VERSION" -t 5`
 
-// Main function
-async function main() {
-  let pool = null
+      console.log(`\nExecuting: sqlcmd ${sqlcmdArgs.replace(dbConfig.password || '', '********')}`)
 
-  try {
-    console.log('╔══════════════════════════════════════════════════════════╗')
-    console.log('║           Avoqado POS Database Setup Utility             ║')
-    console.log('╚══════════════════════════════════════════════════════════╝')
-    console.log('This utility will set up your database for use with Avoqado POS services.\n')
-
-    // Ensure the SQL directory exists
-    try {
-      await fsPromises.mkdir(sqlScriptPath, { recursive: true })
-    } catch (mkdirError) {
-      console.warn(`Could not create SQL directory: ${mkdirError.message}`)
-      // Continue anyway
-    }
-
-    // Get connection config
-    const dbConfig = createDbConfig()
-    console.log(
-      'Connecting to database with config:',
-      JSON.stringify(
-        {
-          user: dbConfig.user,
-          server: dbConfig.server,
-          database: dbConfig.database,
-          options: dbConfig.options
-        },
-        null,
-        2
-      )
-    )
-
-    // Connect to database
-    console.log('Connecting to database...')
-    pool = await sql.connect(dbConfig)
-    console.log('Connected to database successfully!\n')
-
-    // Process each SQL file/section
-    for (const sqlFile of sqlFiles) {
-      console.log(`Processing: ${sqlFile.description}...`)
-
-      // Define the path for the current SQL file
-      const filePath = path.join(sqlScriptPath, sqlFile.filename)
-      let sqlContent = ''
-
-      // Try to read the file, if it exists
       try {
-        sqlContent = await fsPromises.readFile(filePath, 'utf8')
-        console.log(`  Loaded SQL from file: ${sqlFile.filename}`)
+        const result = execSync(`sqlcmd ${sqlcmdArgs}`, { encoding: 'utf8' })
+        console.log('\n✅ SQL Server connection successful! Server version:')
+        console.log(result.trim())
+        return true
       } catch (error) {
-        // File doesn't exist, use fallback SQL if provided
-        if (sqlFile.fallbackSQL) {
-          console.log(`  File ${sqlFile.filename} not found, using embedded SQL definition`)
-          sqlContent = sqlFile.fallbackSQL
+        console.error('\n❌ SQL Server connection failed:')
+        console.error(error.message)
 
-          // Save the fallback SQL to the file for future use
-          try {
-            await fsPromises.writeFile(filePath, sqlContent)
-            console.log(`  Created file: ${sqlFile.filename} with embedded SQL definition`)
-          } catch (writeError) {
-            console.error(`  Warning: Could not create file ${sqlFile.filename}:`, writeError.message)
-          }
-        } else {
-          console.error(`  Warning: SQL file ${sqlFile.filename} not found and no fallback provided. Skipping.`)
-          continue
+        // Provide more specific guidance based on error message
+        if (error.message.includes('Login failed for user')) {
+          console.error('\nLOGIN FAILED: The username or password is incorrect.')
+          console.error('Please check your .env file or configuration to ensure correct credentials.')
+        } else if (error.message.includes('Named Pipes Provider') || error.message.includes('Login timeout expired')) {
+          console.error('\nCONNECTION FAILED: SQL Server is not running or not accessible.')
+          console.error('Possible causes:')
+          console.error('1. SQL Server service is not running')
+          console.error('2. Server name is incorrect')
+          console.error('3. SQL Server is not allowing remote connections')
+          console.error('4. Firewall is blocking SQL Server port (default: 1433)')
+        }
+
+        return false
+      }
+    } catch (err) {
+      console.error('\n❌ Error testing SQL Server connection:', err.message)
+      return false
+    }
+  } else {
+    // Try PowerShell approach for connection test
+    try {
+      const psScript = `
+$server = "${dbConfig.server}${dbConfig.instanceName ? '\\' + dbConfig.instanceName : ''}"
+$database = "master" # Use master for the connection test
+$user = "${dbConfig.user}"
+$password = "${dbConfig.password || ''}"
+
+Write-Host "Testing connection to SQL Server: $server"
+Write-Host "User: $user"
+
+try {
+    $connectionString = "Server=$server;Database=$database;User Id=$user;Password=$password;Connection Timeout=5;"
+    $connection = New-Object System.Data.SqlClient.SqlConnection $connectionString
+    $connection.Open()
+    
+    $query = "SELECT @@VERSION"
+    $command = New-Object System.Data.SqlClient.SqlCommand $query, $connection
+    $result = $command.ExecuteScalar()
+    
+    Write-Host "✅ SQL Server connection successful! Server version:"
+    Write-Host $result
+    
+    $connection.Close()
+    exit 0
+} catch {
+    Write-Host "❌ SQL Server connection failed:"
+    Write-Host $_.Exception.Message
+    exit 1
+}
+`
+      const psScriptPath = path.join(os.tmpdir(), 'avoqado_test_connection.ps1')
+      fs.writeFileSync(psScriptPath, psScript)
+
+      try {
+        const result = execSync(`powershell -ExecutionPolicy Bypass -File "${psScriptPath}"`, { encoding: 'utf8' })
+        console.log(result.trim())
+        return true
+      } catch (error) {
+        console.error('\n❌ PowerShell SQL Server connection test failed:')
+        if (error.stdout) console.error(error.stdout.trim())
+
+        console.error('\nPossible causes:')
+        console.error('1. SQL Server service is not running')
+        console.error('2. Server name is incorrect')
+        console.error('3. Username or password is incorrect')
+        console.error('4. SQL Server is not allowing remote connections')
+        console.error('5. Firewall is blocking SQL Server port (default: 1433)')
+
+        return false
+      } finally {
+        try {
+          fs.unlinkSync(psScriptPath)
+        } catch (err) {
+          // Ignore cleanup errors
         }
       }
-
-      // Execute the SQL content
-      await executeSqlBatches(pool, sqlContent)
-      console.log(`  Completed: ${sqlFile.description}\n`)
+    } catch (err) {
+      console.error('\n❌ Error testing SQL Server connection using PowerShell:', err.message)
+      return false
     }
+  }
+}
 
-    // Get current change tracking version
-    console.log('Getting current change tracking version...')
-    const versionResult = await pool.request().query('SELECT CHANGE_TRACKING_CURRENT_VERSION() AS CurrentVersion')
-    const currentVersion = versionResult.recordset[0].CurrentVersion
-    console.log(`Current change tracking version: ${currentVersion}`)
+// Function to check if the database exists
+async function checkDatabaseExists(dbConfig) {
+  console.log('\n========== DATABASE EXISTENCE CHECK ==========')
 
-    // Verify tables were created
+  // Check if sqlcmd is available
+  let sqlcmdAvailable = false
+  try {
+    execSync('sqlcmd -?', { stdio: 'ignore' })
+    sqlcmdAvailable = true
+  } catch (err) {
+    // SQLCMD not available, will use PowerShell
+  }
+
+  if (sqlcmdAvailable) {
     try {
-      console.log('\nVerifying table creation...')
-      const verifyResult = await pool.request().query(`
-        SELECT TABLE_NAME 
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_NAME IN ('TicketEvents', 'ProductEvents', 'PaymentEvents', 'TurnoEvents')
-      `)
+      // Check if database exists
+      const sqlcmdArgs = `-S "${dbConfig.server}${dbConfig.instanceName ? '\\' + dbConfig.instanceName : ''}" -d "master" -U "${dbConfig.user}" -P "${dbConfig.password || ''}" -Q "SELECT name FROM sys.databases WHERE name = '${dbConfig.database}'" -h -1`
 
-      console.log(`${verifyResult.recordset.length} of 4 required tables exist:`)
-      verifyResult.recordset.forEach((row) => {
-        console.log(`- ${row.TABLE_NAME}`)
+      try {
+        const result = execSync(`sqlcmd ${sqlcmdArgs}`, { encoding: 'utf8' })
+
+        if (result.trim().includes(dbConfig.database)) {
+          console.log(`✅ Database '${dbConfig.database}' exists.`)
+          return true
+        } else {
+          console.log(`❌ Database '${dbConfig.database}' does not exist.`)
+
+          // Ask if user wants to create the database
+          console.log('\nWould you like to create the database now? (y/n)')
+          const answer = await new Promise((resolve) => {
+            process.stdin.once('data', (data) => {
+              resolve(data.toString().trim().toLowerCase())
+            })
+          })
+
+          if (answer === 'y' || answer === 'yes') {
+            // Create the database
+            const createDbArgs = `-S "${dbConfig.server}${dbConfig.instanceName ? '\\' + dbConfig.instanceName : ''}" -d "master" -U "${dbConfig.user}" -P "${dbConfig.password || ''}" -Q "CREATE DATABASE [${dbConfig.database}]"`
+
+            try {
+              execSync(`sqlcmd ${createDbArgs}`, { stdio: 'inherit' })
+              console.log(`✅ Database '${dbConfig.database}' created successfully.`)
+              return true
+            } catch (error) {
+              console.error(`❌ Failed to create database '${dbConfig.database}':`, error.message)
+              return false
+            }
+          } else {
+            console.log(`Skipping database creation for '${dbConfig.database}'.`)
+            return false
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error checking if database exists:', error.message)
+        return false
+      }
+    } catch (err) {
+      console.error('Error checking database existence:', err.message)
+      return false
+    }
+  } else {
+    // Use PowerShell approach
+    try {
+      const psScript = `
+$server = "${dbConfig.server}${dbConfig.instanceName ? '\\' + dbConfig.instanceName : ''}"
+$database = "${dbConfig.database}"
+$user = "${dbConfig.user}"
+$password = "${dbConfig.password || ''}"
+
+try {
+    $connectionString = "Server=$server;Database=master;User Id=$user;Password=$password;"
+    $connection = New-Object System.Data.SqlClient.SqlConnection $connectionString
+    $connection.Open()
+    
+    $query = "SELECT name FROM sys.databases WHERE name = '$database'"
+    $command = New-Object System.Data.SqlClient.SqlCommand $query, $connection
+    $result = $command.ExecuteScalar()
+    
+    if ($result -eq $database) {
+        Write-Host "✅ Database '$database' exists."
+        $connection.Close()
+        exit 0
+    } else {
+        Write-Host "❌ Database '$database' does not exist."
+        Write-Host "Would you like to create the database now? (y/n)"
+        $answer = Read-Host
+        
+        if ($answer -eq 'y' -or $answer -eq 'yes') {
+            $createQuery = "CREATE DATABASE [$database]"
+            $createCommand = New-Object System.Data.SqlClient.SqlCommand $createQuery, $connection
+            $createCommand.ExecuteNonQuery()
+            Write-Host "✅ Database '$database' created successfully."
+            $connection.Close()
+            exit 0
+        } else {
+            Write-Host "Skipping database creation for '$database'."
+            $connection.Close()
+            exit 1
+        }
+    }
+} catch {
+    Write-Host "❌ Error checking if database exists:"
+    Write-Host $_.Exception.Message
+    exit 1
+}
+`
+      const psScriptPath = path.join(os.tmpdir(), 'avoqado_check_database.ps1')
+      fs.writeFileSync(psScriptPath, psScript)
+
+      try {
+        const result = execSync(`powershell -ExecutionPolicy Bypass -File "${psScriptPath}"`, { encoding: 'utf8', stdio: 'inherit' })
+        return true
+      } catch (error) {
+        console.error('❌ Database check or creation failed')
+        return false
+      } finally {
+        try {
+          fs.unlinkSync(psScriptPath)
+        } catch (err) {
+          // Ignore cleanup errors
+        }
+      }
+    } catch (err) {
+      console.error('Error checking database existence using PowerShell:', err.message)
+      return false
+    }
+  }
+}
+
+// Main function to run the diagnostics and setup
+async function main() {
+  console.log('╔══════════════════════════════════════════════════════════╗')
+  console.log('║       Avoqado POS Database Setup & Diagnostics Tool      ║')
+  console.log('╚══════════════════════════════════════════════════════════╝')
+
+  // Get database configuration
+  const dbConfig = createDbConfig()
+
+  // Check SQL Server connection
+  const connectionSuccessful = await checkSqlServerConnection(dbConfig)
+
+  if (!connectionSuccessful) {
+    console.error('\n========== CONNECTION TROUBLESHOOTING ==========')
+    console.error('1. Make sure SQL Server is installed and running')
+    console.error('2. Verify your connection parameters in the .env file:')
+    console.error(`   - Current server: ${dbConfig.server}${dbConfig.instanceName ? '\\' + dbConfig.instanceName : ''}`)
+    console.error(`   - Current user: ${dbConfig.user}`)
+    console.error(`   - Current database: ${dbConfig.database}`)
+    console.error(`   - Password: ${dbConfig.password ? 'Provided' : 'Missing or Empty'}`)
+    console.error('3. Make sure the SQL Server service is running:')
+    console.error('   - Open Services (services.msc)')
+    console.error('   - Look for "SQL Server (MSSQLSERVER)" or "SQL Server (SQLEXPRESS)"')
+    console.error('   - Ensure its status is "Running"')
+    console.error('\nWould you like to open the SQL Server Configuration Manager now? (y/n)')
+
+    const answer = await new Promise((resolve) => {
+      process.stdin.once('data', (data) => {
+        resolve(data.toString().trim().toLowerCase())
       })
-    } catch (verifyError) {
-      console.error('Error verifying tables:', verifyError.message)
+    })
+
+    if (answer === 'y' || answer === 'yes') {
+      try {
+        console.log('Attempting to open SQL Server Configuration Manager...')
+        execSync('start SQLServerManager15.msc || start SQLServerManager14.msc || start SQLServerManager13.msc || start SQLServerManager12.msc', { shell: true })
+      } catch (error) {
+        console.log('Could not open SQL Server Configuration Manager automatically.')
+        console.log('Please open it manually from the Windows Start menu.')
+      }
     }
 
-    // Close the pool
-    await pool.close()
-
-    console.log('\n✅ Database setup completed successfully')
-    console.log('\n╔══════════════════════════════════════════════════════════╗')
-    console.log('║                     Next Steps                           ║')
-    console.log('╚══════════════════════════════════════════════════════════╝')
-    console.log('Install and start the Windows service:')
-    console.log('   npm run install-service')
-
-    // Force process exit after a short delay to ensure all logs are written
-    setTimeout(() => {
-      process.exit(0) // This is critical - explicitly exit the process
-    }, 1500)
-  } catch (error) {
-    console.error(`\n❌ Error during database setup: ${error.message}`)
+    console.error('\nPlease fix the connection issues and run this script again.')
     process.exit(1)
   }
+
+  // Check if database exists
+  const databaseExists = await checkDatabaseExists(dbConfig)
+
+  if (!databaseExists) {
+    console.error(`\nDatabase '${dbConfig.database}' does not exist or could not be created.`)
+    console.error('Please create the database manually and run this script again.')
+    process.exit(1)
+  }
+
+  console.log('\n========== DATABASE SETUP ==========')
+  console.log('All diagnostic checks have passed. Proceeding with database setup...')
+  console.log(`Database: ${dbConfig.database}`)
+
+  // At this point, we can proceed with the actual database setup
+
+  // Ensure SQL script directory exists
+  if (!fs.existsSync(sqlScriptPath)) {
+    fs.mkdirSync(sqlScriptPath, { recursive: true })
+  }
+
+  // Create SQL scripts from fallback if they don't exist
+  for (const sqlFileInfo of sqlFiles) {
+    if (sqlFileInfo.fallbackSQL) {
+      const filePath = path.join(sqlScriptPath, sqlFileInfo.filename)
+      if (!fs.existsSync(filePath)) {
+        console.log(`Creating SQL file from fallback: ${sqlFileInfo.filename}`)
+        fs.writeFileSync(filePath, sqlFileInfo.fallbackSQL)
+      }
+    }
+  }
+
+  // Execute SQL files
+  const sqlFilesToExecute = fs.readdirSync(sqlScriptPath).filter((file) => file.endsWith('.sql'))
+  console.log(`\nFound ${sqlFilesToExecute.length} SQL files to execute`)
+
+  // Check if sqlcmd is available
+  let sqlcmdAvailable = false
+  try {
+    execSync('sqlcmd -?', { stdio: 'ignore' })
+    sqlcmdAvailable = true
+  } catch (err) {
+    // SQLCMD not available, will use PowerShell
+  }
+
+  let successCount = 0
+
+  for (const sqlFile of sqlFilesToExecute) {
+    console.log(`\nExecuting: ${sqlFile}`)
+    const scriptPath = path.join(sqlScriptPath, sqlFile)
+
+    if (sqlcmdAvailable) {
+      try {
+        // Execute with SQLCMD
+        const sqlcmdArgs = `-S "${dbConfig.server}${dbConfig.instanceName ? '\\' + dbConfig.instanceName : ''}" -d "${dbConfig.database}" -U "${dbConfig.user}" -P "${dbConfig.password || ''}" -I -i "${scriptPath}"`
+        execSync(`sqlcmd ${sqlcmdArgs}`, { stdio: 'inherit' })
+        console.log(`✅ Successfully executed ${sqlFile}`)
+        successCount++
+      } catch (error) {
+        console.error(`❌ Error executing SQL file ${sqlFile} with sqlcmd:`, error.message)
+      }
+    } else {
+      try {
+        // Read the SQL file
+        const sqlContent = fs.readFileSync(scriptPath, 'utf8')
+
+        // Split by GO to handle batches
+        const sqlBatches = sqlContent.split(/\nGO\s*$/im)
+
+        // Write PowerShell script to execute SQL
+        const psScript = `
+$server = "${dbConfig.server}${dbConfig.instanceName ? '\\' + dbConfig.instanceName : ''}"
+$database = "${dbConfig.database}"
+$user = "${dbConfig.user}"
+$password = "${dbConfig.password || ''}"
+
+$connectionString = "Server=$server;Database=$database;User Id=$user;Password=$password;"
+$connection = New-Object System.Data.SqlClient.SqlConnection $connectionString
+$connection.Open()
+
+$scriptPath = "${scriptPath}"
+Write-Host "Executing script: $scriptPath"
+
+${sqlBatches
+  .filter((batch) => batch.trim())
+  .map(
+    (batch, i) => `
+# Batch ${i + 1}
+$sql = @"
+${batch.trim()}
+"@
+
+Write-Host "Executing batch ${i + 1}..."
+$command = New-Object System.Data.SqlClient.SqlCommand $sql, $connection
+try {
+    $command.ExecuteNonQuery() | Out-Null
+    Write-Host "Batch ${i + 1} executed successfully"
+} catch {
+    Write-Host "Error in batch ${i + 1}: $_"
+    # Continue with next batch
+}
+`
+  )
+  .join('\n')}
+
+$connection.Close()
+Write-Host "Execution of $scriptPath completed"
+`
+        const psScriptPath = path.join(os.tmpdir(), `avoqado_execute_${sqlFile.replace('.sql', '')}.ps1`)
+        fs.writeFileSync(psScriptPath, psScript)
+
+        try {
+          execSync(`powershell -ExecutionPolicy Bypass -File "${psScriptPath}"`, { stdio: 'inherit' })
+          console.log(`✅ Successfully executed ${sqlFile} with PowerShell`)
+          successCount++
+        } catch (error) {
+          console.error(`❌ Error executing SQL file ${sqlFile} with PowerShell:`, error.message)
+        }
+
+        try {
+          fs.unlinkSync(psScriptPath)
+        } catch (err) {
+          // Ignore cleanup errors
+        }
+      } catch (error) {
+        console.error(`❌ Error processing SQL file ${sqlFile}:`, error.message)
+      }
+    }
+  }
+
+  console.log(`\n${successCount} of ${sqlFilesToExecute.length} SQL scripts executed successfully`)
+
+  if (successCount === sqlFilesToExecute.length) {
+    console.log('\n✅ Database setup completed successfully')
+  } else {
+    console.log(`\n⚠️ Database setup completed with ${sqlFilesToExecute.length - successCount} errors.`)
+    console.log('Some tables or objects may not have been created correctly.')
+  }
+
+  console.log('\n╔══════════════════════════════════════════════════════════╗')
+  console.log('║                     Next Steps                           ║')
+  console.log('╚══════════════════════════════════════════════════════════╝')
+  console.log('Install and start the Windows service:')
+  console.log('   npm run install-service')
+
+  process.exit(successCount === sqlFilesToExecute.length ? 0 : 1)
 }
 
 // Run the main function
 main().catch((error) => {
-  console.error('An unexpected error occurred:', error)
+  console.error('\n❌ Error during database setup:', error.message)
   process.exit(1)
 })

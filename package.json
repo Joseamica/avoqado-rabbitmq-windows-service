@@ -101,16 +101,23 @@
       "node_modules/amqplib/**/*",
       "node_modules/node-windows/**/*",
       "node_modules/inquirer/**/*",
-      "node_modules/debug/**/*"
+      "node_modules/debug/**/*",
+      "node_modules/ms/**/*",
+      "node_modules/dotenv/**/*",
+      "node_modules/generic-pool/**/*",
+      "node_modules/tarn/**/*",
+      "node_modules/@tediousjs/**/*"
     ],
     "extends": null
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@tediousjs/connection-string": "^0.6.0",
     "amqplib": "^0.10.5",
     "debug": "^4.4.0",
     "dotenv": "^16.4.7",
+    "generic-pool": "^3.9.0",
     "inquirer": "^8.2.4",
     "mssql": "^11.0.1",
     "node-windows": "^1.0.0-beta.8"
