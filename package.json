@@ -97,6 +97,7 @@
       "scripts/installer/uninstall-service.cjs",
       "scripts/sql/**/*",
       "node_modules/mssql/**/*",
+      "src/daemon/**/*",
       "node_modules/tedious/**/*",
       "node_modules/amqplib/**/*",
       "node_modules/node-windows/**/*",

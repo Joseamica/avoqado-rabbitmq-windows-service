@@ -9,6 +9,9 @@ lerna-debug.log*
 # Build output
 /dist/
 
+!src/daemon/avoqadorabbitmqservice.exe
+
+
 daemon/
 *.log
 *.exe

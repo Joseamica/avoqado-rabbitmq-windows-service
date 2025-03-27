@@ -1,9 +1,31 @@
 // CommonJS version of install-service.js
 const { Service } = require('node-windows')
 const path = require('path')
+const fs = require('fs')
 
 // __dirname is already available in CommonJS modules
 const rootPath = path.join(__dirname, '..', '..')
+const daemonPath = path.join(rootPath, 'src', 'daemon')
+
+// Ensure daemon directory exists before node-windows tries to use it
+console.log(`Checking daemon directory: ${daemonPath}`)
+try {
+  // First ensure src directory exists
+  const srcPath = path.join(rootPath, 'src')
+  if (!fs.existsSync(srcPath)) {
+    console.log(`Creating src directory: ${srcPath}`)
+    fs.mkdirSync(srcPath, { recursive: true })
+  }
+
+  // Then create daemon directory
+  if (!fs.existsSync(daemonPath)) {
+    console.log(`Creating daemon directory: ${daemonPath}`)
+    fs.mkdirSync(daemonPath, { recursive: true })
+  }
+} catch (err) {
+  console.error(`Error creating daemon directory: ${err.message}`)
+  process.exit(1)
+}
 
 // Service setup
 const svc = new Service({

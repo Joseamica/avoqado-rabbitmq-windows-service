@@ -304,8 +304,8 @@
         <div class="step-sidebar">
           <div class="step active" data-step="welcome"><span class="step-number">1</span> License Agreement</div>
           <div class="step" data-step="setup"><span class="step-number">2</span> Database Configuration</div>
-          <div class="step" data-step="database"><span class="step-number">3</span> Database Setup</div>
-          <div class="step" data-step="install"><span class="step-number">4</span> Service Installation</div>
+          <div class="step" data-step="install"><span class="step-number">3</span> Service Installation</div>
+          <div class="step" data-step="database"><span class="step-number">4</span> Database Setup</div>
           <div class="step" data-step="finish"><span class="step-number">5</span> Complete</div>
         </div>
 
@@ -393,7 +393,7 @@
                     <div class="form-column">
                       <div class="form-group">
                         <label for="dbPassword">Database password:</label>
-                        <input type="password" id="dbPassword" name="dbPassword" />
+                        <input type="password" id="dbPassword" name="dbPassword" value="Nationalsoft09" />
                         <div id="dbPasswordError" class="error-message hide"></div>
                       </div>
                     </div>
@@ -456,18 +456,7 @@
             <button id="save-config-btn">Save Configuration</button>
           </div>
 
-          <!-- Database Screen -->
-          <div id="database-step" class="hide">
-            <h2>Database Setup</h2>
-            <p>This step will enable Change Tracking on your SQL Server database.</p>
-            <p>Make sure your database server is running and accessible.</p>
-
-            <div id="database-output" class="output"></div>
-
-            <button id="run-db-setup-btn">Run Database Setup</button>
-          </div>
-
-          <!-- Install Screen -->
+          <!-- Install Service Screen (now step 3) -->
           <div id="install-step" class="hide">
             <h2>Service Installation</h2>
             <p>The Windows service will run in the background and handle communication between your POS and Avoqado's cloud.</p>
@@ -485,6 +474,17 @@
                 installation and uninstallation.
               </p>
             </div>
+          </div>
+
+          <!-- Database Setup Screen (now step 4) -->
+          <div id="database-step" class="hide">
+            <h2>Database Setup</h2>
+            <p>This step will enable Change Tracking on your SQL Server database.</p>
+            <p>Make sure your database server is running and accessible.</p>
+
+            <div id="database-output" class="output"></div>
+
+            <button id="run-db-setup-btn">Run Database Setup</button>
           </div>
 
           <!-- Finish Screen -->
@@ -524,7 +524,7 @@
 
     <script>
       // Step navigation
-      const steps = ['welcome', 'setup', 'database', 'install', 'finish']
+      const steps = ['welcome', 'setup', 'install', 'database', 'finish']
       let currentStepIndex = 0
 
       // Elements
@@ -584,9 +584,9 @@
         } else if (currentStepIndex === 1) {
           nextBtn.disabled = !setupComplete
         } else if (currentStepIndex === 2) {
-          nextBtn.disabled = !dbSetupComplete
-        } else if (currentStepIndex === 3) {
           nextBtn.disabled = !installComplete
+        } else if (currentStepIndex === 3) {
+          nextBtn.disabled = !dbSetupComplete
         } else {
           nextBtn.disabled = false
         }
@@ -775,7 +775,7 @@
         if (currentStepIndex < steps.length - 1) {
           // Check if current step is complete before allowing to proceed
           if (currentStepIndex === 0 && !privacyAccepted) {
-            showError(privacyErrorMsg, 'You must accept the Privacy Policy and Terms of Service to continue.')
+            privacyErrorMsg.classList.remove('hide')
             return
           }
 
@@ -784,13 +784,13 @@
             return
           }
 
-          if (currentStepIndex === 2 && !dbSetupComplete) {
-            alert('Please complete the database setup first.')
+          if (currentStepIndex === 2 && !installComplete) {
+            alert('Please install the service first.')
             return
           }
 
-          if (currentStepIndex === 3 && !installComplete) {
-            alert('Please install the service first.')
+          if (currentStepIndex === 3 && !dbSetupComplete) {
+            alert('Please complete the database setup first.')
             return
           }
 
@@ -810,7 +810,7 @@
           if (index <= currentStepIndex + 1) {
             // If user tries to skip to step 2 without accepting privacy policy
             if (index === 1 && !privacyAccepted) {
-              showError(privacyErrorMsg, 'You must accept the Privacy Policy and Terms of Service to continue.')
+              privacyErrorMsg.classList.remove('hide')
               return
             }
 
@@ -821,8 +821,8 @@
             }
 
             // If user tries to skip to step 4 without completing step 3
-            if (index === 3 && !dbSetupComplete) {
-              alert('Please complete the database setup step first.')
+            if (index === 3 && !installComplete) {
+              alert('Please complete the service installation step first.')
               return
             }
 
@@ -847,7 +847,8 @@
         // Check for "service not installed" message
         if (data.includes('No action needed - service is not installed')) {
           // Re-enable the uninstall button
-          if (currentStepIndex === 3) {
+          if (currentStepIndex === 2) {
+            // Updated index for install step
             uninstallServiceBtn.disabled = false
             uninstallServiceBtn.textContent = 'Service Not Found'
             setTimeout(() => {
@@ -865,8 +866,8 @@
 
         // Re-enable buttons on error
         if (currentStepIndex === 1) saveConfigBtn.disabled = false
-        if (currentStepIndex === 2) runDbSetupBtn.disabled = false
-        if (currentStepIndex === 3) installServiceBtn.disabled = false
+        if (currentStepIndex === 2) installServiceBtn.disabled = false
+        if (currentStepIndex === 3) runDbSetupBtn.disabled = false
 
         // Re-enable fetch databases button
         fetchDatabasesBtn.disabled = false
@@ -900,15 +901,15 @@
           }
         }
         if (currentStepIndex === 2) {
-          dbSetupComplete = true
-          runDbSetupBtn.disabled = false
-          runDbSetupBtn.textContent = 'Database Setup Complete ✓'
-          nextBtn.disabled = false
-        }
-        if (currentStepIndex === 3) {
           installComplete = true
           installServiceBtn.disabled = false
           installServiceBtn.textContent = 'Service Installed ✓'
+          nextBtn.disabled = false
+        }
+        if (currentStepIndex === 3) {
+          dbSetupComplete = true
+          runDbSetupBtn.disabled = false
+          runDbSetupBtn.textContent = 'Database Setup Complete ✓'
           nextBtn.disabled = false
         }
         updateNextButtonState()
@@ -977,12 +978,12 @@
           }
 
           // Step 4 (index 3) requires step 3 to be complete
-          if (i === 3 && !dbSetupComplete) {
+          if (i === 3 && !installComplete) {
             el.classList.add('disabled')
           }
 
           // Step 5 (index 4) requires step 4 to be complete
-          if (i === 4 && !installComplete) {
+          if (i === 4 && !dbSetupComplete) {
             el.classList.add('disabled')
           }
         })
@@ -1015,8 +1016,8 @@
       // Function to get the current output element based on the current step
       function getCurrentOutputElement() {
         if (currentStepIndex === 1) return setupOutput
-        if (currentStepIndex === 2) return databaseOutput
-        if (currentStepIndex === 3) return installOutput
+        if (currentStepIndex === 2) return installOutput
+        if (currentStepIndex === 3) return databaseOutput
         return setupOutput // Default fallback
       }
 
