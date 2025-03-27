@@ -2,7 +2,8 @@
   "name": "avoqado-pos-service",
   "version": "1.0.0",
   "type": "module",
-  "main": "scripts/installer/main-app.cjs",
+  "main": "scripts/installer/main.cjs",
+  "description": "Avoqado POS Service Installer",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
@@ -15,8 +16,8 @@
     "build": "node scripts/installer/build-for-terminal-installation",
     "electron": "electron scripts/installer/main.cjs",
     "download-icon": "node scripts/installer/download-icon.js",
-    "package": "node scripts/installer/download-icon.js && electron-builder --win portable --config.forceCodeSigning=false",
-    "build-installer": "node scripts/installer/download-icon.js && electron-builder --win nsis --config.forceCodeSigning=false",
+    "package": "node scripts/installer/download-icon.js && electron-builder --win portable --x64 --config.forceCodeSigning=false",
+    "build-installer": "node scripts/installer/download-icon.js && electron-builder --win nsis --x64 --config.forceCodeSigning=false --config.asar.smartUnpack=true",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -81,18 +82,34 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
+      "displayLanguageSelector": true,
       "installerIcon": "scripts/installer/assets/icon.ico",
       "uninstallerIcon": "scripts/installer/assets/icon.ico",
-      "installerHeaderIcon": "scripts/installer/assets/icon.ico"
+      "installerHeaderIcon": "scripts/installer/assets/icon.ico",
+      "perMachine": false,
+      "differentialPackage": false
     },
     "asar": true,
+    "asarUnpack": [
+      "scripts/installer/setup.cjs",
+      "scripts/installer/setup-db.cjs",
+      "scripts/installer/install-service.cjs",
+      "scripts/installer/uninstall-service.cjs",
+      "scripts/sql/**/*",
+      "node_modules/mssql/**/*",
+      "node_modules/tedious/**/*",
+      "node_modules/amqplib/**/*",
+      "node_modules/node-windows/**/*",
+      "node_modules/inquirer/**/*",
+      "node_modules/debug/**/*"
+    ],
     "extends": null
   },
   "author": "",
   "license": "ISC",
-  "description": "",
   "dependencies": {
     "amqplib": "^0.10.5",
+    "debug": "^4.3.4",
     "dotenv": "^16.4.7",
     "inquirer": "^8.2.4",
     "mssql": "^11.0.1",

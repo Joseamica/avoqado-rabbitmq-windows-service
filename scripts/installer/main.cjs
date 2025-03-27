@@ -5,7 +5,34 @@ const fs = require('fs') // Regular fs for sync methods like existsSync
 const fsPromises = require('fs').promises // Promise-based fs for async methods
 const { execSync, spawn } = require('child_process')
 const sql = require('mssql')
+const os = require('os')
 
+// ===== FIX 1: DISABLE HARDWARE ACCELERATION AND GPU FEATURES =====
+// This prevents the cache errors you're seeing
+app.disableHardwareAcceleration()
+app.commandLine.appendSwitch('disable-gpu')
+app.commandLine.appendSwitch('disable-http-cache')
+app.commandLine.appendSwitch('disable-cache')
+
+// ===== FIX 2: IMPLEMENT SINGLE INSTANCE LOCK =====
+// This prevents multiple windows from opening
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  console.log('Another instance is already running. Exiting.')
+  app.quit()
+  return
+}
+
+// Set up second-instance handler
+app.on('second-instance', (event, commandLine, workingDirectory) => {
+  // Someone tried to run a second instance, focus our window instead
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  }
+})
+
+// ===== ORIGINAL CODE CONTINUES FROM HERE =====
 // Set up error handling
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error)
@@ -55,6 +82,7 @@ function createWindow() {
 
     mainWindow = new BrowserWindow({
       width: 800,
+      resizable: false,
       height: 600,
       icon: iconPath,
       webPreferences: {
@@ -318,24 +346,27 @@ ipcMain.on('uninstall-service', (event) => {
   runScriptWithProgress('uninstall-service', event)
 })
 
-// Helper function to run scripts with progress feedback
+// ===== FIX 3: IMPROVED SCRIPT RUNNER =====
+// Enhanced with better path resolution and error handling
 function runScriptWithProgress(scriptName, event) {
-  // Try different paths based on environment
-  let scriptPath
+  // Try different paths based on environment - enhanced with more possibilities
+  const possiblePaths = [
+    // First check in the app.asar.unpacked folder (for packaged app)
+    path.join(process.resourcesPath, 'app.asar.unpacked', 'scripts', 'installer', `${scriptName}.cjs`),
+    // Then in resources/scripts/installer (for extraResources)
+    path.join(process.resourcesPath, 'scripts', 'installer', `${scriptName}.cjs`),
+    // Then try the current directory (for development)
+    path.join(__dirname, `${scriptName}.cjs`),
+    // Also check parent directories
+    path.join(__dirname, '..', 'installer', `${scriptName}.cjs`)
+  ]
 
-  if (isProduction) {
-    // First check in the app.asar
-    scriptPath = path.join(__dirname, `${scriptName}.cjs`)
-
-    // If not found, check in resources directory (extraResources)
-    if (!fs.existsSync(scriptPath)) {
-      scriptPath = path.join(resourcesPath, 'scripts', 'installer', `${scriptName}.cjs`)
-    }
-  } else {
-    // In development
-    scriptPath = path.join(__dirname, `${scriptName}.cjs`)
-    if (!fs.existsSync(scriptPath)) {
-      scriptPath = path.join(__dirname, `${scriptName}.js`)
+  // Find first existing path
+  let scriptPath = null
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      scriptPath = p
+      break
     }
   }
 
@@ -344,42 +375,31 @@ function runScriptWithProgress(scriptName, event) {
   event.reply('script-output', `Script path: ${scriptPath}`)
 
   // Check if file exists
-  if (!fs.existsSync(scriptPath)) {
-    console.error(`Script not found: ${scriptPath}`)
-    event.reply('script-error', `Script not found: ${scriptPath}`)
-
-    // Look for files in possible locations
-    const locations = [__dirname, path.join(resourcesPath, 'scripts', 'installer'), path.join(resourcesPath, 'scripts')]
-
-    for (const location of locations) {
-      try {
-        if (fs.existsSync(location)) {
-          const files = fs.readdirSync(location)
-          console.log(`Files in ${location}: ${files.join(', ')}`)
-          event.reply('script-output', `Files in ${location}: ${files.join(', ')}`)
-        } else {
-          console.log(`Directory doesn't exist: ${location}`)
-        }
-      } catch (err) {
-        console.error(`Error reading directory ${location}: ${err.message}`)
-      }
-    }
-
+  if (!scriptPath) {
+    console.error(`Script not found: ${scriptName}.cjs`)
+    event.reply('script-error', `Script not found: ${scriptName}.cjs`)
+    console.log('Checked paths:', possiblePaths)
+    event.reply('script-output', 'Checked these paths:')
+    possiblePaths.forEach((p) => {
+      event.reply('script-output', `- ${p}`)
+    })
     return
   }
 
   try {
     console.log(`Found script, executing: ${scriptPath}`)
 
-    // Run the script with Node.js, passing environment variables
-    const child = spawn('node', ['--no-warnings', scriptPath], {
-      shell: true,
+    // ===== FIX: USE ELECTRON'S EXECUTABLE WITH ENVIRONMENT VARIABLES =====
+    // This ensures better compatibility with the packaged app
+    const child = spawn(process.execPath, ['--no-warnings', scriptPath], {
+      shell: false, // Don't use shell - this avoids path quoting issues
       env: {
         ...process.env,
         APP_DATA_PATH: userDataPath,
         APP_IS_PACKAGED: isProduction ? 'true' : 'false',
         CONFIG_FILE_PATH: configFilePath,
-        RESOURCES_PATH: resourcesPath
+        RESOURCES_PATH: resourcesPath,
+        ELECTRON_RUN_AS_NODE: '1' // Force Node.js mode for child process
       }
     })
 

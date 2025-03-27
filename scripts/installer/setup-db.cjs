@@ -1,18 +1,110 @@
 // CommonJS version of setup-db.js
-const fs = require('fs') // Regular fs for sync methods
-const fsPromises = require('fs').promises // Promise-based fs
-const path = require('path')
-const sql = require('mssql')
-const dotenv = require('dotenv')
-const inquirer = require('inquirer')
+try {
+  // First ensure dependencies are installed
+  require('./ensure-dependencies')
+} catch (error) {
+  console.error('Failed to ensure dependencies:', error.message)
+  // Continue execution - we'll handle missing modules during import
+}
+
+// Now try to load required modules with error handling
+let fs, path, sql, dotenv
+
+try {
+  fs = require('fs')
+} catch (error) {
+  console.error('Failed to load fs module:', error.message)
+  process.exit(1)
+}
+
+try {
+  path = require('path')
+} catch (error) {
+  console.error('Failed to load path module:', error.message)
+  process.exit(1)
+}
+
+try {
+  dotenv = require('dotenv')
+} catch (error) {
+  console.error('Failed to load dotenv:', error.message)
+  console.error('Trying to continue without dotenv...')
+}
+
+// Only load SQL after ensuring dependencies
+try {
+  sql = require('mssql')
+} catch (error) {
+  console.error('Failed to load mssql module:', error.message)
+  if (error.code === 'MODULE_NOT_FOUND') {
+    console.error('This could be due to missing dependencies. Please run:')
+    console.error('npm install debug ms mssql dotenv tedious')
+  }
+  process.exit(1)
+}
+
+// Get fsPromises after ensuring fs is loaded
+const fsPromises = fs.promises
 
 // Load environment variables
-dotenv.config()
+if (dotenv) {
+  dotenv.config()
+}
 
-// In CommonJS, __dirname is already defined, so we don't need to declare it
-// Get paths
-const rootPath = path.join(__dirname, '..', '..')
-const sqlScriptPath = path.join(__dirname, '..', 'sql')
+// Get paths based on environment
+let rootPath, sqlScriptPath, configPath
+
+// Check if we're running from the packaged app
+if (process.env.APP_IS_PACKAGED === 'true') {
+  // In production, use environment variables set by main.cjs
+  rootPath = process.env.APP_DATA_PATH || path.join(__dirname, '..', '..')
+  configPath = process.env.CONFIG_FILE_PATH || path.join(rootPath, '.env')
+
+  // Look for SQL scripts in various locations
+  const possibleSqlPaths = [
+    // First look in app.asar.unpacked
+    path.join(process.env.RESOURCES_PATH || process.resourcesPath, 'app.asar.unpacked', 'scripts', 'sql'),
+    // Then look in resources directory
+    path.join(process.env.RESOURCES_PATH || process.resourcesPath, 'scripts', 'sql'),
+    // Fallback to extraResources
+    path.join(process.env.RESOURCES_PATH || process.resourcesPath, 'scripts', 'sql')
+  ]
+
+  // Find the first path that exists
+  sqlScriptPath = possibleSqlPaths.find((p) => fs.existsSync(p))
+
+  if (!sqlScriptPath) {
+    console.error('Could not find SQL scripts directory in any of the expected locations')
+    // Create a default path
+    sqlScriptPath = path.join(process.env.RESOURCES_PATH || process.resourcesPath, 'scripts', 'sql')
+
+    // Create the directory if it doesn't exist
+    if (!fs.existsSync(sqlScriptPath)) {
+      fs.mkdirSync(sqlScriptPath, { recursive: true })
+    }
+  }
+
+  console.log('Running in production mode')
+} else {
+  // In development
+  rootPath = path.join(__dirname, '..', '..')
+  configPath = path.join(rootPath, '.env')
+  sqlScriptPath = path.join(rootPath, 'scripts', 'sql')
+
+  console.log('Running in development mode')
+}
+
+console.log(`Root path: ${rootPath}`)
+console.log(`Config path: ${configPath}`)
+console.log(`SQL script path: ${sqlScriptPath}`)
+
+// Load .env file if it exists
+if (fs.existsSync(configPath) && dotenv) {
+  dotenv.config({ path: configPath })
+  console.log('Loaded configuration from:', configPath)
+} else {
+  console.warn('No configuration file found at:', configPath)
+}
 
 // Create database connection configuration
 function createDbConfig() {
@@ -31,7 +123,9 @@ function createDbConfig() {
     server: process.env.DB_SERVER || 'localhost',
     options: {
       encrypt: false,
-      trustServerCertificate: true
+      trustServerCertificate: true,
+      connectTimeout: 30000, // Increased timeout
+      requestTimeout: 30000 // Increased request timeout
     }
   }
 
@@ -317,10 +411,10 @@ const sqlFiles = [
 async function tableExists(pool, tableName) {
   try {
     const result = await pool.request().query(`
-        SELECT COUNT(*) AS tableCount 
-        FROM INFORMATION_SCHEMA.TABLES 
-        WHERE TABLE_NAME = '${tableName}'
-      `)
+      SELECT COUNT(*) AS tableCount 
+      FROM INFORMATION_SCHEMA.TABLES 
+      WHERE TABLE_NAME = '${tableName}'
+    `)
     return result.recordset[0].tableCount > 0
   } catch (error) {
     console.error(`Error checking if table ${tableName} exists:`, error.message)
@@ -332,10 +426,10 @@ async function tableExists(pool, tableName) {
 async function triggerExists(pool, triggerName) {
   try {
     const result = await pool.request().query(`
-        SELECT COUNT(*) AS triggerCount 
-        FROM sys.triggers 
-        WHERE name = '${triggerName}'
-      `)
+      SELECT COUNT(*) AS triggerCount 
+      FROM sys.triggers 
+      WHERE name = '${triggerName}'
+    `)
     return result.recordset[0].triggerCount > 0
   } catch (error) {
     console.error(`Error checking if trigger ${triggerName} exists:`, error.message)
@@ -347,13 +441,13 @@ async function triggerExists(pool, triggerName) {
 async function defaultConstraintExists(pool, tableName, columnName) {
   try {
     const result = await pool.request().query(`
-        SELECT COUNT(*) AS constraintCount
-        FROM sys.default_constraints dc
-        JOIN sys.columns c ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
-        JOIN sys.tables t ON c.object_id = t.object_id
-        WHERE t.name = '${tableName}'
-        AND c.name = '${columnName}'
-      `)
+      SELECT COUNT(*) AS constraintCount
+      FROM sys.default_constraints dc
+      JOIN sys.columns c ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
+      JOIN sys.tables t ON c.object_id = t.object_id
+      WHERE t.name = '${tableName}'
+      AND c.name = '${columnName}'
+    `)
     return result.recordset[0].constraintCount > 0
   } catch (error) {
     console.error(`Error checking if default constraint exists for ${tableName}.${columnName}:`, error.message)
@@ -432,18 +526,41 @@ async function executeSqlBatches(pool, sqlContent) {
 
 // Main function
 async function main() {
-  console.log('╔══════════════════════════════════════════════════════════╗')
-  console.log('║           Avoqado POS Database Setup Utility             ║')
-  console.log('╚══════════════════════════════════════════════════════════╝')
-  console.log('This utility will set up your database for use with Avoqado POS services.\n')
+  let pool = null
 
   try {
+    console.log('╔══════════════════════════════════════════════════════════╗')
+    console.log('║           Avoqado POS Database Setup Utility             ║')
+    console.log('╚══════════════════════════════════════════════════════════╝')
+    console.log('This utility will set up your database for use with Avoqado POS services.\n')
+
     // Ensure the SQL directory exists
-    await fsPromises.mkdir(sqlScriptPath, { recursive: true })
+    try {
+      await fsPromises.mkdir(sqlScriptPath, { recursive: true })
+    } catch (mkdirError) {
+      console.warn(`Could not create SQL directory: ${mkdirError.message}`)
+      // Continue anyway
+    }
+
+    // Get connection config
+    const dbConfig = createDbConfig()
+    console.log(
+      'Connecting to database with config:',
+      JSON.stringify(
+        {
+          user: dbConfig.user,
+          server: dbConfig.server,
+          database: dbConfig.database,
+          options: dbConfig.options
+        },
+        null,
+        2
+      )
+    )
 
     // Connect to database
     console.log('Connecting to database...')
-    const pool = await sql.connect(createDbConfig())
+    pool = await sql.connect(dbConfig)
     console.log('Connected to database successfully!\n')
 
     // Process each SQL file/section
@@ -488,6 +605,23 @@ async function main() {
     const currentVersion = versionResult.recordset[0].CurrentVersion
     console.log(`Current change tracking version: ${currentVersion}`)
 
+    // Verify tables were created
+    try {
+      console.log('\nVerifying table creation...')
+      const verifyResult = await pool.request().query(`
+        SELECT TABLE_NAME 
+        FROM INFORMATION_SCHEMA.TABLES 
+        WHERE TABLE_NAME IN ('TicketEvents', 'ProductEvents', 'PaymentEvents', 'TurnoEvents')
+      `)
+
+      console.log(`${verifyResult.recordset.length} of 4 required tables exist:`)
+      verifyResult.recordset.forEach((row) => {
+        console.log(`- ${row.TABLE_NAME}`)
+      })
+    } catch (verifyError) {
+      console.error('Error verifying tables:', verifyError.message)
+    }
+
     // Close the pool
     await pool.close()
 
@@ -497,6 +631,11 @@ async function main() {
     console.log('╚══════════════════════════════════════════════════════════╝')
     console.log('Install and start the Windows service:')
     console.log('   npm run install-service')
+
+    // Force process exit after a short delay to ensure all logs are written
+    setTimeout(() => {
+      process.exit(0) // This is critical - explicitly exit the process
+    }, 1500)
   } catch (error) {
     console.error(`\n❌ Error during database setup: ${error.message}`)
     process.exit(1)
