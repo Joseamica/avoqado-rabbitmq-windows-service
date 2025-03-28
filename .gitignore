@@ -9,16 +9,9 @@ lerna-debug.log*
 # Build output
 /dist/
 
-!src/daemon/avoqadorabbitmqservice.exe
 
 
-daemon/
-*.log
-*.exe
-*.out
-*.pid
-nssm.exe
-*.sock
+
 
 # Specific service files
 AvoqadoRabbitMQService.*

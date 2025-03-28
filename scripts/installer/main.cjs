@@ -9,8 +9,9 @@ const os = require('os')
 
 // ===== FIX 1: DISABLE HARDWARE ACCELERATION AND GPU FEATURES =====
 // This prevents the cache errors you're seeing
-app.disableHardwareAcceleration()
 app.commandLine.appendSwitch('disable-gpu')
+app.disableHardwareAcceleration()
+app.commandLine.appendSwitch('no-sandbox')
 app.commandLine.appendSwitch('disable-http-cache')
 app.commandLine.appendSwitch('disable-cache')
 
@@ -42,7 +43,7 @@ process.on('uncaughtException', (error) => {
 })
 
 // Determine if we're running in production or development
-const isProduction = !process.defaultApp && !process.env.NODE_ENV?.includes('dev')
+const isProduction = process.env.APP_IS_PACKAGED === 'true' || process.resourcesPath || process.env.NODE_ENV === 'production'
 console.log(`Running in ${isProduction ? 'production' : 'development'} mode`)
 
 // Define paths for different environments

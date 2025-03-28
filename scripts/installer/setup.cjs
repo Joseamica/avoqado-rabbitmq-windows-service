@@ -1,19 +1,85 @@
-// CommonJS version of setup.js
+// CommonJS version of setup.cjs
 const inquirer = require('inquirer')
-const fs = require('fs').promises
+const fs = require('fs')
+const fsPromises = fs.promises
 const path = require('path')
 const sql = require('mssql')
 const amqp = require('amqplib')
+const os = require('os')
 
-// Calculate paths
-const rootPath = path.resolve(__dirname, '..', '..')
-const envPath = path.join(rootPath, '.env')
+// FIXED: Always use a consistent path in AppData for configuration
+// This is critical for the Windows service to find it later
+const appDataConfigDir = path.join(os.homedir(), 'AppData', 'Roaming', 'avoqado-pos-service')
+const primaryEnvPath = path.join(appDataConfigDir, '.env')
+
+// Create the primary config directory if it doesn't exist
+if (!fs.existsSync(appDataConfigDir)) {
+  try {
+    fs.mkdirSync(appDataConfigDir, { recursive: true })
+    console.log(`Created app data directory: ${appDataConfigDir}`)
+  } catch (err) {
+    console.error(`CRITICAL ERROR: Could not create app data directory: ${err.message}`)
+    console.error('The application may not function correctly without this directory.')
+    // Continue anyway - we'll try to save to other locations as fallback
+  }
+}
+
+// Function to save config to primary and backup locations
+async function saveConfiguration(envContent) {
+  const saveLocations = []
+  const savedSuccessfully = []
+
+  // PRIMARY LOCATION: Always try AppData first
+  saveLocations.push({
+    path: primaryEnvPath,
+    description: 'Primary AppData location (used by Windows service)'
+  })
+
+  // BACKUP LOCATION 1: Project directory (for development mode)
+  const rootPath = path.resolve(__dirname, '..', '..')
+  const projectEnvPath = path.join(rootPath, '.env')
+
+  saveLocations.push({
+    path: projectEnvPath,
+    description: 'Project directory (for development mode)'
+  })
+
+  // BACKUP LOCATION 2: User data path (for standalone mode)
+  if (process.env.APP_DATA_PATH) {
+    const userDataEnvPath = path.join(process.env.APP_DATA_PATH, '.env')
+    saveLocations.push({
+      path: userDataEnvPath,
+      description: 'Electron user data path'
+    })
+  }
+
+  // Save to all locations
+  for (const location of saveLocations) {
+    try {
+      // Ensure the directory exists
+      const dirPath = path.dirname(location.path)
+      if (!fs.existsSync(dirPath)) {
+        await fsPromises.mkdir(dirPath, { recursive: true })
+      }
+
+      // Write the file
+      await fsPromises.writeFile(location.path, envContent)
+      console.log(`✅ Configuration saved to ${location.path} (${location.description})`)
+      savedSuccessfully.push(location.path)
+    } catch (error) {
+      console.error(`❌ Failed to save to ${location.path}: ${error.message}`)
+    }
+  }
+
+  return savedSuccessfully.length > 0
+}
 
 async function main() {
   console.log('╔══════════════════════════════════════════════════════════╗')
   console.log('║           Avoqado POS Service Setup Utility              ║')
   console.log('╚══════════════════════════════════════════════════════════╝')
   console.log('This utility will help you configure the service settings.\n')
+  console.log(`Primary configuration location: ${primaryEnvPath}`)
 
   const answers = await inquirer.prompt([
     {
@@ -105,6 +171,7 @@ async function main() {
     console.log('\nTesting connections...')
 
     // Test database connection
+    let dbConnected = false
     try {
       let connectionConfig
 
@@ -116,7 +183,8 @@ async function main() {
           server: answers.dbServer,
           options: {
             encrypt: false,
-            trustServerCertificate: true
+            trustServerCertificate: true,
+            connectTimeout: 15000
           }
         }
 
@@ -135,6 +203,7 @@ async function main() {
       const pool = await sql.connect(connectionConfig)
       console.log('✅ Database connection successful!')
       await pool.close()
+      dbConnected = true
     } catch (error) {
       console.error('❌ Database connection failed:', error.message)
       const continueAnyway = await inquirer.prompt({
@@ -151,11 +220,13 @@ async function main() {
     }
 
     // Test RabbitMQ connection
+    let rmqConnected = false
     try {
       console.log('Connecting to RabbitMQ...')
       const connection = await amqp.connect(answers.rabbitmqUrl)
       console.log('✅ RabbitMQ connection successful!')
       await connection.close()
+      rmqConnected = true
     } catch (error) {
       console.error('❌ RabbitMQ connection failed:', error.message)
       const continueAnyway = await inquirer.prompt({
@@ -170,50 +241,57 @@ async function main() {
         process.exit(1)
       }
     }
+
+    // Warn if both connections failed
+    if (!dbConnected && !rmqConnected) {
+      console.warn('\n⚠️ WARNING: Both database and RabbitMQ connections failed.')
+      console.warn('The service may not work correctly with this configuration.')
+    }
   }
 
   // Generate .env content
-  let envContent = `# Avoqado POS Service Configuration\n# Generated by setup utility\n\n`
+  const envContent = `# Avoqado POS Service Configuration
+# Generated by setup utility on ${new Date().toISOString()}
 
-  // Add venue ID
-  envContent += `# Venue configuration\nVENUE_ID=${answers.venueId}\n\n`
+# Venue configuration
+VENUE_ID=${answers.venueId}
 
-  // Add database configuration
-  envContent += `# Database configuration\n`
+# Database configuration
+${
+  answers.configType === 'details'
+    ? `DB_USER=${answers.dbUser}
+DB_PASSWORD=${answers.dbPassword}
+DB_SERVER=${answers.dbServer}
+DB_DATABASE=${answers.dbName}${answers.dbInstance ? `\nDB_INSTANCE=${answers.dbInstance}` : ''}`
+    : `DB_CONNECTION_STRING=${answers.connectionString}`
+}
 
-  if (answers.configType === 'details') {
-    envContent += `DB_USER=${answers.dbUser}\n`
-    envContent += `DB_PASSWORD=${answers.dbPassword}\n`
-    envContent += `DB_SERVER=${answers.dbServer}\n`
-    envContent += `DB_DATABASE=${answers.dbName}\n`
-    if (answers.dbInstance) {
-      envContent += `DB_INSTANCE=${answers.dbInstance}\n`
-    }
-  } else {
-    envContent += `DB_CONNECTION_STRING=${answers.connectionString}\n`
-  }
+# RabbitMQ configuration
+RABBITMQ_URL=${answers.rabbitmqUrl}
+REQUEST_QUEUE=${answers.requestQueue}
+RESPONSE_QUEUE=${answers.responseQueue}
+`
 
-  envContent += `\n# RabbitMQ configuration\n`
-  envContent += `RABBITMQ_URL=${answers.rabbitmqUrl}\n`
-  envContent += `REQUEST_QUEUE=${answers.requestQueue}\n`
-  envContent += `RESPONSE_QUEUE=${answers.responseQueue}\n`
-
-  // Write the .env file
+  // Write the .env file to multiple locations
   try {
-    await fs.writeFile(envPath, envContent)
-    console.log(`\n✅ Configuration saved to ${envPath}`)
+    const saveSuccessful = await saveConfiguration(envContent)
 
-    // Provide next steps
-    console.log('\n╔══════════════════════════════════════════════════════════╗')
-    console.log('║                     Next Steps                           ║')
-    console.log('╚══════════════════════════════════════════════════════════╝')
-    console.log('1. Run the SQL setup script to enable Change Tracking:')
-    console.log('   npm run setup-db')
-    console.log('\n2. Install and start the Windows service:')
-    console.log('   npm run install-service')
-    console.log('\nOr to run without installing as a service:')
-    console.log('   npm start')
-    console.log('\nThank you for using Avoqado POS Service!')
+    if (saveSuccessful) {
+      // Provide next steps
+      console.log('\n╔══════════════════════════════════════════════════════════╗')
+      console.log('║                     Next Steps                           ║')
+      console.log('╚══════════════════════════════════════════════════════════╝')
+      console.log('1. Run the SQL setup script to enable Change Tracking:')
+      console.log('   npm run setup-db')
+      console.log('\n2. Install and start the Windows service:')
+      console.log('   npm run install-service')
+      console.log('\nOr to run without installing as a service:')
+      console.log('   npm start')
+      console.log('\nThank you for using Avoqado POS Service!')
+    } else {
+      console.error('\n❌ Failed to save configuration to any location.')
+      process.exit(1)
+    }
   } catch (error) {
     console.error(`\n❌ Error saving configuration: ${error.message}`)
     process.exit(1)

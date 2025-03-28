@@ -7,8 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "eslint . --config eslint.config.js",
+    "lint:fix": "eslint . --fix --config eslint.config.js",
     "setup": "node scripts/installer/setup.cjs",
     "setup-db": "node scripts/installer/setup-db.cjs",
     "install-service": "node scripts/installer/install-service.cjs",
@@ -61,6 +61,10 @@
         ]
       },
       {
+        "from": "scripts/installer/index.html",
+        "to": "scripts/installer/index.html"
+      },
+      {
         "from": ".env.example",
         "to": ".env.example"
       }
@@ -73,12 +77,12 @@
         "nsis",
         "portable"
       ],
+      "requestedExecutionLevel": "requireAdministrator",
       "icon": "scripts/installer/assets/icon.ico",
       "artifactName": "${productName}-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
@@ -88,10 +92,17 @@
       "installerHeaderIcon": "scripts/installer/assets/icon.ico",
       "perMachine": true,
       "differentialPackage": false,
-      "include": "scripts/installer/installer.nsh"
+      "include": "scripts/installer/installer.nsh",
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true
     },
     "asar": true,
     "asarUnpack": [
+      "src/daemon/**/*",
+      "src/index.js",
+      "src/services/**/*",
+      "src/config/**/*",
+      "src/utils/**/*",
       "scripts/installer/setup.cjs",
       "scripts/installer/setup-db.cjs",
       "scripts/installer/install-service.cjs",
@@ -99,7 +110,6 @@
       "scripts/sql/**/*",
       "node_modules/mssql/**/*",
       "node_modules/xml/**/*",
-      "src/daemon/**/*",
       "node_modules/tedious/**/*",
       "node_modules/amqplib/**/*",
       "node_modules/node-windows/**/*",
@@ -113,7 +123,7 @@
     ],
     "extends": null
   },
-  "author": "",
+  "author": "Jose Antonio Amieva",
   "license": "ISC",
   "dependencies": {
     "@tediousjs/connection-string": "^0.6.0",
@@ -127,13 +137,13 @@
     "xml": "^1.0.1"
   },
   "devDependencies": {
-    "@eslint/js": "^9.22.0",
+    "@eslint/js": "^9.23.0",
     "electron": "^29.2.0",
     "electron-builder": "^24.13.3",
-    "eslint": "^9.22.0",
+    "eslint": "^9.23.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-node": "^11.1.0",
-    "eslint-plugin-prettier": "^5.2.3",
+    "eslint-plugin-prettier": "^5.2.5",
     "fs-extra": "^11.3.0",
     "globals": "^15.15.0",
     "nodemon": "^3.1.9",

@@ -47,7 +47,7 @@ async function uninstallService() {
       svc.stop()
 
       // Wait for the service to stop with a timeout
-      await Promise.race([stopPromise, sleep(30000).then(() => console.log('Waiting for service to stop... (timeout may occur if service is already stopped)'))])
+      await Promise.race([stopPromise, sleep(10000).then(() => console.log('Waiting for service to stop... (timeout may occur if service is already stopped)'))])
 
       // Give a small delay to ensure service operations complete
       await sleep(2000)
@@ -67,7 +67,7 @@ async function uninstallService() {
       svc.uninstall()
 
       // Wait for the service to uninstall with a timeout
-      await Promise.race([uninstallPromise, sleep(30000).then(() => console.log('Waiting for service to uninstall... (timeout may occur if service is already uninstalled)'))])
+      await Promise.race([uninstallPromise, sleep(10000).then(() => console.log('Waiting for service to uninstall... (timeout may occur if service is already uninstalled)'))])
 
       // Give a small delay to ensure service operations complete
       await sleep(3000)
@@ -86,10 +86,16 @@ async function uninstallService() {
         // Delete each file individually to ensure better error handling
         for (const file of daemonFiles) {
           const filePath = path.join(daemonPath, file)
-          await fsPromises.rm(filePath, { force: true })
-          console.log(`Deleted ${filePath}`)
-        }
 
+          // Check if it's a file before deleting
+          const stats = await fsPromises.stat(filePath)
+          if (stats.isFile()) {
+            await fsPromises.rm(filePath, { force: true })
+            console.log(`Deleted ${filePath}`)
+          } else {
+            console.log(`Skipping ${filePath} as it's not a file`)
+          }
+        }
         console.log('All daemon files deleted successfully')
       } catch (error) {
         console.error('Error deleting daemon files:', error.message)
