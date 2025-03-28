@@ -86,8 +86,9 @@
       "installerIcon": "scripts/installer/assets/icon.ico",
       "uninstallerIcon": "scripts/installer/assets/icon.ico",
       "installerHeaderIcon": "scripts/installer/assets/icon.ico",
-      "perMachine": false,
-      "differentialPackage": false
+      "perMachine": true,
+      "differentialPackage": false,
+      "include": "scripts/installer/installer.nsh"
     },
     "asar": true,
     "asarUnpack": [
@@ -97,6 +98,7 @@
       "scripts/installer/uninstall-service.cjs",
       "scripts/sql/**/*",
       "node_modules/mssql/**/*",
+      "node_modules/xml/**/*",
       "src/daemon/**/*",
       "node_modules/tedious/**/*",
       "node_modules/amqplib/**/*",
@@ -121,7 +123,8 @@
     "generic-pool": "^3.9.0",
     "inquirer": "^8.2.4",
     "mssql": "^11.0.1",
-    "node-windows": "^1.0.0-beta.8"
+    "node-windows": "^1.0.0-beta.8",
+    "xml": "^1.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
