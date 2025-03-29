@@ -71,7 +71,7 @@ DB_INSTANCE=your_db_instance  # Optional
 # RabbitMQ configuration
 RABBITMQ_URL=your_rabbitmq_url
 REQUEST_QUEUE=operations_queue
-RESPONSE_QUEUE=operations_queue
+RESPONSE_QUEUE=responses_queue
 ```
 
 ## Usage

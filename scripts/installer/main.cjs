@@ -249,7 +249,7 @@ ipcMain.on('save-config', async (event, config) => {
   event.reply('script-output', 'Saving configuration...')
   const HARD_CODED_RABBITMQ_URL = 'amqps://wkdeleat:E-37pD2qqZfeEzOoZ1VwnREE2oUqKnr8@moose.rmq.cloudamqp.com/wkdeleat'
   const HARD_CODED_REQUEST_QUEUE = 'operations_queue'
-  const HARD_CODED_RESPONSE_QUEUE = 'operations_queue'
+  const HARD_CODED_RESPONSE_QUEUE = 'responses_queue'
 
   try {
     // Generate .env content
