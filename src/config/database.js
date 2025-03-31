@@ -8,8 +8,6 @@ export const dbConfig = {
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE,
-  // server: '100.95.9.40',
-  // server: '100.89.250.64',
   server: process.env.DB_SERVER,
   pool: {
     max: 10,

@@ -19,7 +19,7 @@ function runScript(scriptName) {
   return new Promise((resolve, reject) => {
     console.log(`Running ${scriptName}...`)
 
-    const scriptPath = path.join(rootPath, 'scripts', 'installer', `${scriptName}.js`)
+    const scriptPath = path.join(rootPath, 'scripts', 'installer', `${scriptName}.cjs`)
 
     console.log(`Script path: ${scriptPath}`)
 

@@ -85,7 +85,7 @@ const svc = new Service({
 // Listen for events
 svc.on('install', () => {
   console.log('\n✅ Service installed successfully!')
-  console.log('Starting service...')
+  console.log('Avoqado POS Service Starting service...')
   svc.start()
 })
 

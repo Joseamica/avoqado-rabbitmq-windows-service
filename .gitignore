@@ -9,16 +9,16 @@ lerna-debug.log*
 # Build output
 /dist/
 
-
+/src/daemon
 
 
 
 # Specific service files
-AvoqadoRabbitMQService.*
+avoqadorabbitmqservice.*
 avoqadorabbitmqservice.*
 *avoqadorabbitmq*.xml
-*AvoqadoRabbitMQ*.xml
-*AvoqadoRabbitMQService*
+*avoqadorabbitmq*.xml
+*avoqadorabbitmq*
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json

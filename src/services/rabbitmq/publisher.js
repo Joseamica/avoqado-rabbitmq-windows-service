@@ -2,6 +2,9 @@
 import { getConnection, getChannel } from './consumer.js'
 import { logInfo, logError, logDebug } from '../../utils/logger.js'
 
+// Get venue ID from environment
+const venueId = process.env.VENUE_ID || 'madre_cafecito'
+
 // Queue names for different event types
 const QUEUES = {
   TicketEvents: 'pos.tickets',
@@ -11,7 +14,7 @@ const QUEUES = {
 }
 
 // Exchange name
-const EXCHANGE_NAME = 'pos.events'
+const POS_EVENTS_EXCHANGE = 'pos.events'
 
 // Track initialization status
 let isInitialized = false
@@ -37,23 +40,23 @@ export async function initPublisher() {
     logDebug('Publisher confirm channel created')
 
     // Declare exchange
-    await confirmChannel.assertExchange(EXCHANGE_NAME, 'direct', { durable: true })
+    await confirmChannel.assertExchange(POS_EVENTS_EXCHANGE, 'direct', { durable: true })
 
     // Declare queues and bind to exchange
     for (const [eventType, queueName] of Object.entries(QUEUES)) {
       await confirmChannel.assertQueue(queueName, {
         durable: true,
         arguments: {
-          'x-dead-letter-exchange': `${EXCHANGE_NAME}.dlx`,
+          'x-dead-letter-exchange': `${POS_EVENTS_EXCHANGE}.dlx`,
           'x-dead-letter-routing-key': `${queueName}.dead`
         }
       })
-      await confirmChannel.bindQueue(queueName, EXCHANGE_NAME, queueName)
+      await confirmChannel.bindQueue(queueName, POS_EVENTS_EXCHANGE, queueName)
 
       // Setup dead letter exchange and queue
-      await confirmChannel.assertExchange(`${EXCHANGE_NAME}.dlx`, 'direct', { durable: true })
+      await confirmChannel.assertExchange(`${POS_EVENTS_EXCHANGE}.dlx`, 'direct', { durable: true })
       await confirmChannel.assertQueue(`${queueName}.dead`, { durable: true })
-      await confirmChannel.bindQueue(`${queueName}.dead`, `${EXCHANGE_NAME}.dlx`, `${queueName}.dead`)
+      await confirmChannel.bindQueue(`${queueName}.dead`, `${POS_EVENTS_EXCHANGE}.dlx`, `${queueName}.dead`)
 
       logInfo(`Queue ${queueName} configured with dead letter handling`)
     }
@@ -105,7 +108,8 @@ export async function publishEvent(eventType, data) {
         source: `POS-${process.env.COMPUTERNAME || process.env.HOSTNAME || 'unknown'}`,
         timestamp: new Date().toISOString(),
         eventType,
-        messageId
+        messageId,
+        venueId // Explicitly include venue ID in metadata
       }
     }
 
@@ -115,21 +119,24 @@ export async function publishEvent(eventType, data) {
     // Publish with publisher confirms
     return new Promise((resolve) => {
       confirmChannel.publish(
-        EXCHANGE_NAME,
+        POS_EVENTS_EXCHANGE,
         routingKey,
         message,
         {
           persistent: true,
           contentType: 'application/json',
           messageId,
-          timestamp: Math.floor(Date.now() / 1000)
+          timestamp: Math.floor(Date.now() / 1000),
+          headers: {
+            'x-venue-id': venueId // Add venue ID as header for filtering
+          }
         },
         (err, ok) => {
           if (err) {
             logError(`Error in confirm callback: ${err.message}`)
             resolve(false)
           } else {
-            logDebug(`Published ${eventType} event to ${routingKey} with ID ${messageId}`)
+            logDebug(`Published ${eventType} event to ${routingKey} with ID ${messageId} for venue: ${venueId}`)
             resolve(true)
           }
         }
@@ -143,7 +150,7 @@ export async function publishEvent(eventType, data) {
 
 // Generate a unique message ID
 function generateMessageId() {
-  return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`
+  return `${venueId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`
 }
 
 // Check if publisher is initialized

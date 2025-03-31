@@ -1,13 +1,17 @@
 // src/services/rabbitmq/consumer.js
 import amqp from 'amqplib'
-import { RABBITMQ_URL, REQUEST_QUEUE, RESPONSE_QUEUE } from '../../config/rabbitmq.js'
+import { RABBITMQ_URL } from '../../config/rabbitmq.js'
 import { logInfo, logError, logDebug } from '../../utils/logger.js'
 import * as handlers from '../handlers/index.js'
-import { sendResponse } from './sender.js'
 import { resetPublisherState } from './publisher.js'
+import { handlePing } from '../handlers/ping.js'
+
+// Venues exchange
+const VENUES_EXCHANGE = 'venues.exchange'
 
 // Variables for RabbitMQ connection
 let connection, channel
+let venueId = process.env.VENUE_ID || 'madre_cafecito'
 
 // Flag to track connection status
 let isConnecting = false
@@ -29,12 +33,41 @@ export async function connectToRabbitMQ() {
     // Create channel
     channel = await connection.createChannel()
 
-    // Enable publisher confirms for reliable publishing
-    // Note: No need to call confirmChannel() here as we'll create a separate confirm channel when needed
+    // Declare venues exchange
+    await channel.assertExchange(VENUES_EXCHANGE, 'topic', { durable: true })
 
-    // Ensure queues exist
-    await channel.assertQueue(REQUEST_QUEUE, { durable: true })
-    await channel.assertQueue(RESPONSE_QUEUE, { durable: true })
+    // Declare venue-specific request queue
+    const requestQueue = `requests.${venueId}`
+    await channel.assertQueue(requestQueue, {
+      durable: true,
+      arguments: {
+        'x-dead-letter-exchange': 'venues.requests.dlx',
+        'x-dead-letter-routing-key': `${requestQueue}.dead`
+      }
+    })
+
+    // Bind to venue-specific routing pattern
+    await channel.bindQueue(requestQueue, VENUES_EXCHANGE, `venue.${venueId}.#`)
+
+    // Setup dead letter exchange and queue for requests
+    await channel.assertExchange('venues.requests.dlx', 'direct', { durable: true })
+    await channel.assertQueue(`${requestQueue}.dead`, { durable: true })
+    await channel.bindQueue(`${requestQueue}.dead`, 'venues.requests.dlx', `${requestQueue}.dead`)
+
+    // Declare venue-specific response queue
+    const responseQueue = `responses.${venueId}`
+    await channel.assertQueue(responseQueue, {
+      durable: true,
+      arguments: {
+        'x-dead-letter-exchange': 'venues.responses.dlx',
+        'x-dead-letter-routing-key': `${responseQueue}.dead`
+      }
+    })
+
+    // Setup dead letter exchange and queue for responses
+    await channel.assertExchange('venues.responses.dlx', 'direct', { durable: true })
+    await channel.assertQueue(`${responseQueue}.dead`, { durable: true })
+    await channel.bindQueue(`${responseQueue}.dead`, 'venues.responses.dlx', `${responseQueue}.dead`)
 
     // Reset isConnecting flag
     isConnecting = false
@@ -54,7 +87,7 @@ export async function connectToRabbitMQ() {
     })
 
     // Start consuming messages
-    setupConsumers()
+    setupConsumers(requestQueue)
 
     return { connection, channel }
   } catch (error) {
@@ -113,7 +146,7 @@ function handleConnectionError(error) {
 }
 
 // Set up message consumers
-function setupConsumers() {
+function setupConsumers(requestQueue) {
   // Ensure we have a channel
   if (!channel) {
     return logError('Cannot set up consumers: No RabbitMQ channel available')
@@ -122,7 +155,7 @@ function setupConsumers() {
   // Configure prefetch to process one message at a time
   channel.prefetch(1)
 
-  channel.consume(REQUEST_QUEUE, async (msg) => {
+  channel.consume(requestQueue, async (msg) => {
     if (!msg) return
 
     try {
@@ -130,10 +163,14 @@ function setupConsumers() {
       const content = JSON.parse(msg.content.toString())
       const correlationId = content.correlationId
 
-      logDebug(`Received message: ${content.operation} with correlationId: ${correlationId}`)
+      logDebug(`Received message: ${content.operation} with correlationId: ${correlationId} for venue: ${venueId}`)
 
       // Process based on operation type
       switch (content.operation) {
+        case 'PING':
+          // Special handling for PING operations with direct reply-to
+          await handlePing(content.data, correlationId, msg.properties.replyTo)
+          break
         case 'GET_SHIFTS':
           await handlers.shifts.handleGetShifts(content.data, correlationId)
           break
@@ -191,7 +228,39 @@ function setupConsumers() {
     }
   })
 
-  logInfo('Message consumers set up successfully')
+  logInfo(`Message consumers set up successfully for venue: ${venueId}`)
+}
+
+// Send response back to cloud
+export async function sendResponse(operation, data, correlationId) {
+  try {
+    if (!channel) {
+      throw new Error('RabbitMQ channel not available')
+    }
+
+    const responseQueue = `responses.${venueId}`
+
+    const message = {
+      operation,
+      data,
+      correlationId,
+      venueId, // Include venue ID in response
+      timestamp: new Date().toISOString()
+    }
+
+    await channel.sendToQueue(responseQueue, Buffer.from(JSON.stringify(message)), {
+      persistent: true
+    })
+
+    logInfo(`Response sent to ${operation} with correlationId: ${correlationId} for venue: ${venueId}`)
+  } catch (error) {
+    logError(`Error sending response: ${error.message}`)
+    console.error('Failed to send response:', {
+      operation,
+      correlationId,
+      error: error.message
+    })
+  }
 }
 
 // Get connection for other modules to use
