@@ -24,10 +24,12 @@ async function initPool() {
  */
 export async function handleGetShifts(data, correlationId) {
   const hostname = getHostname()
+  const venueId = data.venueId || 'madre_cafecito'
+  let transaction
 
   try {
     pool = await initPool()
-    let transaction = new Transaction(pool)
+    transaction = new Transaction(pool)
     await transaction.begin()
 
     let request = transaction.request()
@@ -44,7 +46,8 @@ export async function handleGetShifts(data, correlationId) {
         {
           message: 'Estación no encontrada.'
         },
-        correlationId
+        correlationId,
+        venueId
       )
       return
     }
@@ -82,7 +85,8 @@ export async function handleGetShifts(data, correlationId) {
         message: 'Se ha obtenido el turno correctamente.',
         turno: turnoQuery.recordset[0]
       },
-      correlationId
+      correlationId,
+      venueId
     )
   } catch (error) {
     console.error('❌ Error al obtener turno:', error.message || error)
@@ -103,7 +107,8 @@ export async function handleGetShifts(data, correlationId) {
       {
         message: 'Error interno al obtener el turno. Intente de nuevo.'
       },
-      correlationId
+      correlationId,
+      venueId
     )
   }
 }

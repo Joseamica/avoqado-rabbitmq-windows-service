@@ -28,7 +28,7 @@ export async function handlePrintAndPay(data, correlationId) {
 
   const folio = '28'
   const idFormadepago = 'ACARD' // Assuming payment method is always AVO
-  const tipodecambio = 1.0
+  // const tipodecambio = 1.0
   const importe = 1500.0
   const propina = data.propina ?? 0.0
   const referencia = data.referencia ?? 'pago de tpv'
@@ -53,7 +53,8 @@ export async function handlePrintAndPay(data, correlationId) {
           folio,
           message: `La cuenta con folio ${folio} no fue encontrada.`
         },
-        correlationId
+        correlationId,
+        venueId
       )
       throw new Error('Cuenta no encontrada.')
     }
@@ -67,7 +68,8 @@ export async function handlePrintAndPay(data, correlationId) {
           folio,
           message: 'La cuenta ya esta pagada.'
         },
-        correlationId
+        correlationId,
+        venueId
       )
       throw new Error('Cuenta ya está pagada.')
     }
@@ -94,7 +96,8 @@ export async function handlePrintAndPay(data, correlationId) {
           folio,
           message: 'Impresion ya se ha realizado.'
         },
-        correlationId
+        correlationId,
+        venueId
       )
       return await processPayment(folio, idFormadepago, importe, propina, venueId, referencia, correlationId)
     }
@@ -276,7 +279,8 @@ export async function processPayment(folio, idFormadepago, importe, propina, ven
           folio,
           message: 'Debes imprimir antes de pagar.'
         },
-        correlationId
+        correlationId,
+        venueId
       )
       throw new Error('Debes imprimir antes de pagar.')
     }
@@ -296,7 +300,8 @@ export async function processPayment(folio, idFormadepago, importe, propina, ven
           folio,
           message: 'Estación no encontrada.'
         },
-        correlationId
+        correlationId,
+        venueId
       )
       throw new Error('Estación no encontrada.')
     }
@@ -324,7 +329,8 @@ export async function processPayment(folio, idFormadepago, importe, propina, ven
           folio,
           message: 'Turno no abierto.'
         },
-        correlationId
+        correlationId,
+        venueId
       )
       throw new Error('Turno no abierto.')
     }
@@ -456,7 +462,8 @@ export async function processPayment(folio, idFormadepago, importe, propina, ven
         folio,
         message: 'Pago registrado correctamente.'
       },
-      correlationId
+      correlationId,
+      venueId
     )
   } catch (error) {
     if (transaction && !transaction._aborted) {
@@ -474,7 +481,8 @@ export async function processPayment(folio, idFormadepago, importe, propina, ven
         folio,
         error: error.message
       },
-      correlationId
+      correlationId,
+      venueId
     )
 
     console.error('Error in processPayment:', error)

@@ -1,7 +1,9 @@
 // src/services/rabbitmq/sender.js
-import { RESPONSE_QUEUE } from '../../config/rabbitmq.js'
-import { logError } from '../../utils/logger.js'
 import { getChannel } from './consumer.js'
+import { logError, logInfo } from '../../utils/logger.js'
+
+// Get venue ID from environment
+const venueId = process.env.VENUE_ID || 'madre_cafecito'
 
 // Send response back to cloud backend
 export async function sendResponse(operation, data, correlationId) {
@@ -12,22 +14,25 @@ export async function sendResponse(operation, data, correlationId) {
       throw new Error('RabbitMQ channel not available')
     }
 
+    // Use venue-specific response queue
+    const responseQueue = `responses.${venueId}`
+
     const message = {
       operation,
       data,
-      correlationId, // Include the correlation ID from the request
+      correlationId,
+      venueId, // Include venue ID in response
       timestamp: new Date().toISOString()
     }
 
-    await channel.sendToQueue(RESPONSE_QUEUE, Buffer.from(JSON.stringify(message)), {
+    await channel.sendToQueue(responseQueue, Buffer.from(JSON.stringify(message)), {
       persistent: true,
-      // Adding message properties with correlationId for additional reliability
-      messageProperties: {
-        correlationId: correlationId
+      headers: {
+        'x-venue-id': venueId
       }
     })
 
-    console.log(`Response sent to ${operation} with correlationId: ${correlationId}`)
+    logInfo(`Response sent to ${operation} with correlationId: ${correlationId} for venue: ${venueId}`)
   } catch (error) {
     logError(`Error sending response: ${error.message}`)
     console.error('Failed to send response:', {

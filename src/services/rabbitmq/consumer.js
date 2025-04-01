@@ -4,7 +4,6 @@ import { RABBITMQ_URL } from '../../config/rabbitmq.js'
 import { logInfo, logError, logDebug } from '../../utils/logger.js'
 import * as handlers from '../handlers/index.js'
 import { resetPublisherState } from './publisher.js'
-import { handlePing } from '../handlers/ping.js'
 
 // Venues exchange
 const VENUES_EXCHANGE = 'venues.exchange'
@@ -167,10 +166,6 @@ function setupConsumers(requestQueue) {
 
       // Process based on operation type
       switch (content.operation) {
-        case 'PING':
-          // Special handling for PING operations with direct reply-to
-          await handlePing(content.data, correlationId, msg.properties.replyTo)
-          break
         case 'GET_SHIFTS':
           await handlers.shifts.handleGetShifts(content.data, correlationId)
           break
