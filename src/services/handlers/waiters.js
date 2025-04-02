@@ -18,7 +18,7 @@ async function initPool() {
  * @param {Object} data - Request data
  * @param {string} correlationId - Correlation ID for tracking request-response
  */
-export async function handleRequestWaiters(data, correlationId) {
+export async function handleGetWaiters(data, correlationId) {
   const { venueId } = data
 
   // Validate required parameters
@@ -45,7 +45,8 @@ export async function handleRequestWaiters(data, correlationId) {
           nombre, 
           tipo, 
           visible, 
-          perfil 
+          perfil,
+          contraseña
         FROM meseros
       `)
 
@@ -85,5 +86,5 @@ export async function handleRequestWaiters(data, correlationId) {
 }
 
 export default {
-  handleRequestWaiters
+  handleGetWaiters
 }

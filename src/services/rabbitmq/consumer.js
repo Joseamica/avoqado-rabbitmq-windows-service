@@ -172,8 +172,8 @@ function setupConsumers(requestQueue) {
         case 'GET_SHIFTS':
           await handlers.shifts.handleGetShifts(content.data, correlationId)
           break
-        case 'REQUEST_WAITERS':
-          await handlers.waiters.handleRequestWaiters(content.data, correlationId)
+        case 'GET_WAITERS':
+          await handlers.waiters.handleGetWaiters(content.data, correlationId)
           break
         case 'GET_PRODUCTOS_Y_CATEGORIAS':
           await handlers.products.handleGetProductosYCategorias(content.data, correlationId)
