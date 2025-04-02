@@ -11,12 +11,16 @@
     "lint:fix": "eslint . --fix --config eslint.config.js",
     "setup": "node scripts/installer/setup.cjs",
     "setup-db": "node scripts/installer/setup-db.cjs",
-    "install-service": "node scripts/installer/install-service.cjs",
-    "uninstall-service": "node scripts/installer/uninstall-service.cjs",
+    "install-service": "node installer/install-service.cjs",
+    "uninstall-service": "node installer/uninstall-service.cjs",
+    "package": "node src/installer/package.cjs",
+    "legacy_install-service": "node scripts/installer/install-service.cjs",
+    "legacy_uninstall-service": "node scripts/installer/uninstall-service.cjs",
+    "legacy_package": "node scripts/installer/download-icon.js && electron-builder --win portable --x64 --config.forceCodeSigning=false",
+
     "build": "node scripts/installer/build-for-terminal-installation",
     "electron": "electron scripts/installer/main.cjs",
     "download-icon": "node scripts/installer/download-icon.js",
-    "package": "node scripts/installer/download-icon.js && electron-builder --win portable --x64 --config.forceCodeSigning=false",
     "build-installer": "node scripts/installer/download-icon.js && electron-builder --win nsis --x64 --config.forceCodeSigning=false --config.asar.smartUnpack=true",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -127,6 +131,7 @@
   "dependencies": {
     "@tediousjs/connection-string": "^0.6.0",
     "amqplib": "^0.10.5",
+    "archiver": "^7.0.1",
     "debug": "^4.4.0",
     "dotenv": "^16.4.7",
     "generic-pool": "^3.9.0",

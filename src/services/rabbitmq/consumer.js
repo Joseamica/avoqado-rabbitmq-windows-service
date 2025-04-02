@@ -166,6 +166,9 @@ function setupConsumers(requestQueue) {
 
       // Process based on operation type
       switch (content.operation) {
+        case 'PING':
+          await handlers.ping.handlePing(content.data, correlationId)
+          break
         case 'GET_SHIFTS':
           await handlers.shifts.handleGetShifts(content.data, correlationId)
           break
