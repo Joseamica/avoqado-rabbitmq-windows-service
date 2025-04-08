@@ -67,7 +67,7 @@ export function logInfo(message) {
   try {
     fs.appendFileSync(logFilePath, logMessage)
     // Add informational events to Event Viewer too
-    if (os.platform() === 'win32') {
+    if (os.platform() === 'win32' && isProduction) {
       // Use /T INFORMATION for info type, /ID 1000 for Info ID
       exec(`eventcreate /ID 1000 /L Application /T INFORMATION /SO "AvoqadoPOSService" /D "${message.replace(/"/g, '\\"')}"`, (err) => {
         if (err) console.error('Error writing to Event Viewer:', err)
@@ -85,7 +85,7 @@ export function logWarning(message) {
   try {
     fs.appendFileSync(logFilePath, logMessage)
     // Add warning events to Event Viewer
-    if (os.platform() === 'win32') {
+    if (os.platform() === 'win32' && isProduction) {
       // Use /T WARNING for warning type, /ID 1002 for Warning ID
       exec(`eventcreate /ID 1002 /L Application /T WARNING /SO "AvoqadoPOSService" /D "${message.replace(/"/g, '\\"')}"`, (err) => {
         if (err) console.error('Error writing to Event Viewer:', err)

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 import fs from 'fs'
 import { exec } from 'child_process'
 import * as os from 'os'
+const isProduction = process.env.APP_IS_PACKAGED === 'true' || process.resourcesPath || process.env.NODE_ENV === 'production'
 
 // 🔹 Solution for __dirname in ES Modules
 const __filename = fileURLToPath(import.meta.url)
@@ -20,6 +21,7 @@ const errorLogPath = path.join(logsDir, 'error')
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir, { recursive: true })
 }
+
 
 // Define the format for logs
 const logFormat = winston.format.combine(
@@ -71,7 +73,7 @@ export function logError(message, error) {
     logger.error(`${message}: ${error.message}`, { stack: error.stack })
 
     // Save to Windows Event Viewer
-    if (os.platform() === 'win32') {
+    if (os.platform() === 'win32' && isProduction) {
       exec(`eventcreate /ID 1 /L Application /T ERROR /SO "AvoqadoPOSService" /D "${message}: ${error.message.replace(/"/g, '\\"')}"`, (err) => {
         if (err) console.error('Error writing to Event Viewer:', err)
       })
@@ -80,7 +82,7 @@ export function logError(message, error) {
     logger.error(message)
 
     // Save to Windows Event Viewer
-    if (os.platform() === 'win32') {
+    if (os.platform() === 'win32' && isProduction) {
       exec(`eventcreate /ID 1 /L Application /T ERROR /SO "AvoqadoPOSService" /D "${message.replace(/"/g, '\\"')}"`, (err) => {
         if (err) console.error('Error writing to Event Viewer:', err)
       })

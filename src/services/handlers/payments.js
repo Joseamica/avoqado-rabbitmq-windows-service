@@ -26,12 +26,12 @@ export async function handlePrintAndPay(data, correlationId) {
   console.log('data', data)
   console.log('Processing print and pay with correlationId:', correlationId)
 
-  const folio = '28'
+  const folio = data.folio
   const idFormadepago = 'ACARD' // Assuming payment method is always AVO
   // const tipodecambio = 1.0
-  const importe = 1500.0
-  const propina = data.propina ?? 0.0
-  const referencia = data.referencia ?? 'pago de tpv'
+  const importe = data.importe / 100
+  const propina = data.propina / 100 ?? 0.0
+  const referencia = data.referencia ?? `Pago desde AvoqadoTpv, TPV: ${data.tpvId}`
   const venueId = data.venueId ?? 'madre_cafecito' // Assuming venue ID is always madre_cafecito
 
   let transaction
@@ -45,7 +45,7 @@ export async function handlePrintAndPay(data, correlationId) {
     const cuentaQuery = await request.input('folio', folio).query(`
           SELECT impreso, pagado FROM tempcheques WHERE folio = @folio
         `)
-
+      console.log(cuentaQuery)
     if (!cuentaQuery.recordset.length) {
       await sendResponse(
         'PAYMENT_ERROR',

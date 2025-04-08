@@ -1,3 +1,14 @@
+/*
+Purpose: Cleanup script to remove existing objects before redeployment
+Removes: Triggers, Tables, and Stored Procedures
+*/
+
+-- Start transaction for safety
+BEGIN TRANSACTION;
+
+BEGIN TRY
+    PRINT 'Starting cleanup process...';
+
 IF EXISTS (SELECT * FROM sys.triggers WHERE name = 'trgComandaActualizado')
     DROP TRIGGER trgComandaActualizado;
 GO
@@ -49,4 +60,13 @@ GO
 IF EXISTS (SELECT * FROM sys.procedures WHERE name = 'CleanupOldEvents')
     DROP PROCEDURE CleanupOldEvents;
 GO
+
+    PRINT 'Cleanup process completed successfully.';
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    PRINT 'Error during cleanup process: ' + ERROR_MESSAGE();
+    ROLLBACK TRANSACTION;
+    THROW;
+END CATCH
 

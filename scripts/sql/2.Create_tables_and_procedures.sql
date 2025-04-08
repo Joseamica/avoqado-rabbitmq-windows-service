@@ -111,6 +111,7 @@ CREATE TABLE [dbo].[TicketEvents] (
   [TableNumber] [nvarchar](100) NOT NULL,
   [OrderNumber] [int] NULL,
   [EventType] [nvarchar](20) NOT NULL,
+  [Source] [nvarchar](20) NOT NULL,
   [OperationType] [nvarchar](20) NOT NULL,
   [ShiftId] [int] NULL,
   [ShiftState] [nvarchar](20) NULL,

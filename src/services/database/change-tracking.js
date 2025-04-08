@@ -519,127 +519,221 @@ async function processProductChanges() {
 /**
  * Process changes in the PaymentEvents table
  */
+/**
+ * Process changes in the PaymentEvents table
+ */
 async function processPaymentChanges() {
   const tableName = 'PaymentEvents'
   try {
-    // Get changes since last version
-    const result = await pool.request().input('lastVersion', sql.BigInt, lastChangeVersions[tableName]).query(`
-        SELECT p.*, CT.SYS_CHANGE_OPERATION, CT.SYS_CHANGE_VERSION
-        FROM CHANGETABLE(CHANGES ${tableName}, @lastVersion) AS CT
-        JOIN ${tableName} p ON p.ID = CT.ID
-        WHERE CT.SYS_CHANGE_OPERATION IN ('I', 'U')
-          AND p.UpdateDate IS NULL
-        ORDER BY CT.SYS_CHANGE_VERSION
-      `)
+    // Use a transaction with serializable isolation to prevent race conditions
+    const transaction = new sql.Transaction(pool)
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE)
+    
+    try {
+      // Get changes since last version, but ONLY those that are not already being processed
+      const result = await transaction.request()
+        .input('lastVersion', sql.BigInt, lastChangeVersions[tableName])
+        .query(`
+          SELECT p.*, CT.SYS_CHANGE_OPERATION, CT.SYS_CHANGE_VERSION
+          FROM CHANGETABLE(CHANGES ${tableName}, @lastVersion) AS CT
+          JOIN ${tableName} p ON p.ID = CT.ID
+          WHERE CT.SYS_CHANGE_OPERATION IN ('I', 'U')
+            AND p.UpdateDate IS NULL
+            AND p.Response IS NULL -- Ensure we only get records that no other process is handling
+          ORDER BY CT.SYS_CHANGE_VERSION
+        `)
 
-    if (result.recordset.length === 0) {
-      return false
-    }
+      if (result.recordset.length === 0) {
+        await transaction.commit()
+        return false
+      }
 
-    logInfo(`Found ${result.recordset.length} payment changes to process`)
+      logInfo(`Found ${result.recordset.length} payment changes to process`)
 
-    let newVersion = lastChangeVersions[tableName]
-    let processedCount = 0
-    const cache = processedEventsCache[tableName]
+      let newVersion = lastChangeVersions[tableName]
+      let processedCount = 0
+      const cache = processedEventsCache[tableName]
 
-    for (const row of result.recordset) {
-      try {
-        // Update highest change version seen
-        if (row.SYS_CHANGE_VERSION > newVersion) {
-          newVersion = row.SYS_CHANGE_VERSION
-        }
-
-        // Create a unique identifier for this event to prevent duplicates
-        const eventKey = `${row.ID}-${row.Status}-${row.Folio}-${row.IdFormaDePago}`
-
-        // Skip if we've already processed this exact event recently
-        if (cache.has(eventKey)) {
-          logDebug(`Skipping already processed payment event: ${eventKey}`)
-
-          // Still mark it as processed in the database
-          const now = new Date().toISOString()
-          await pool.request().input('response', sql.NVarChar, 'Skipped - duplicate event').input('updateDate', sql.DateTimeOffset, now).input('id', sql.Int, row.ID).query(`
-              UPDATE PaymentEvents 
-              SET IsSuccess = 1, 
-                  IsFailed = 0, 
-                  Response = @response, 
-                  UpdateDate = @updateDate 
-              WHERE ID = @id
-            `)
-          continue
-        }
-
-        // Build message object
-        const message = {
-          venueId,
-          folio: row.Folio,
-          idFormaDePago: row.IdFormaDePago,
-          table: row.TableNumber,
-          operation: row.OperationType,
-          status: row.Status
-        }
-
-        // Add optional fields if present
-        if (row.Importe !== null) message.importe = row.Importe
-        if (row.Propina !== null) message.propina = row.Propina
-        if (row.Referencia !== null) message.referencia = row.Referencia
-        if (row.WorkspaceId !== null) message.uniqueCodeFromPos = row.WorkspaceId
-        if (row.UniqueBillCodePos !== null) message.uniqueBillCodePos = row.UniqueBillCodePos
-        if (row.Method !== null) message.method = row.Method
-        if (row.OrderNumber !== null) message.order = row.OrderNumber
-        if (row.IsSplitTable !== null) message.is_split_table = row.IsSplitTable
-        if (row.MainTable !== null) message.main_table = row.MainTable
-        if (row.SplitSuffix !== null) message.split_suffix = row.SplitSuffix
-
-        // Publish to RabbitMQ
-        const publishResult = await publishEvent('PaymentEvents', message)
-
-        // Mark as processed
+      // Immediately mark all retrieved records as "being processed" within the transaction
+      // This prevents other parallel runs from picking up the same records
+      for (const row of result.recordset) {
         const now = new Date().toISOString()
-        const response = publishResult ? 'Published to RabbitMQ' : 'Failed to publish to RabbitMQ'
-
-        await pool.request().input('response', sql.NVarChar, response).input('updateDate', sql.DateTimeOffset, now).input('id', sql.Int, row.ID).query(`
+        await transaction.request()
+          .input('response', sql.NVarChar, 'Processing in progress')
+          .input('updateDate', sql.DateTimeOffset, now)
+          .input('id', sql.Int, row.ID)
+          .query(`
             UPDATE PaymentEvents 
-            SET IsSuccess = 1, 
+            SET IsSuccess = 0, 
                 IsFailed = 0, 
                 Response = @response, 
                 UpdateDate = @updateDate 
-            WHERE ID = @id
+            WHERE ID = @id AND (UpdateDate IS NULL OR Response IS NULL)
           `)
+      }
+      
+      // Commit transaction to release locks but keep the "processing" state
+      await transaction.commit()
 
-        // Add to cache to prevent duplicate processing
-        cache.add(eventKey)
-        processedCount++
-
-        logDebug(`Processed payment event ${row.ID} via change tracking`)
-      } catch (error) {
-        logError(`Error processing payment event ${row.ID}: ${error.message}`)
-
-        // Mark as failed
+      // Process the payments outside the transaction
+      const uniquePaymentIds = new Set()
+      
+      for (const row of result.recordset) {
         try {
-          const now = new Date().toISOString()
-          await pool.request().input('response', sql.NVarChar, `Error: ${error.message}`).input('updateDate', sql.DateTimeOffset, now).input('id', sql.Int, row.ID).query(`
+          // Update highest change version seen
+          if (row.SYS_CHANGE_VERSION > newVersion) {
+            newVersion = row.SYS_CHANGE_VERSION
+          }
+
+          // Enhanced deduplication - create multiple keys for robust checking
+          const eventKey = `${row.ID}-${row.Status}-${row.Folio}-${row.IdFormaDePago}`
+          
+          // Create a stronger uniqueness key using WorkspaceId (uniqueCodeFromPos) and UniqueBillCodePos
+          // These should be unique per payment across the system
+          const strongUniqueKey = `${row.WorkspaceId || ''}-${row.UniqueBillCodePos || ''}`
+          
+          // Skip if we've already processed this exact event recently
+          // Either via eventKey in the cache or strongUniqueKey in this batch
+          if (cache.has(eventKey) || uniquePaymentIds.has(strongUniqueKey)) {
+            logDebug(`Skipping already processed payment event: ${eventKey || strongUniqueKey}`)
+
+            // Update with "skipped" status
+            const now = new Date().toISOString()
+            await pool.request()
+              .input('response', sql.NVarChar, 'Skipped - duplicate event')
+              .input('updateDate', sql.DateTimeOffset, now)
+              .input('id', sql.Int, row.ID)
+              .query(`
+                UPDATE PaymentEvents 
+                SET IsSuccess = 1, 
+                    IsFailed = 0, 
+                    Response = @response, 
+                    UpdateDate = @updateDate 
+                WHERE ID = @id
+              `)
+            continue
+          }
+
+          // Add to our batch deduplication set before processing
+          if (strongUniqueKey.length > 2) { // Ensure it's not just "-"
+            uniquePaymentIds.add(strongUniqueKey)
+          }
+
+          // Check if referencia contains AvoqadoTpv
+          const shouldSkipSending = row.Referencia && row.Referencia.includes('AvoqadoTpv');
+          
+          if (shouldSkipSending) {
+            // For AvoqadoTpv payments, skip sending to backend but mark as successfully processed
+            logDebug(`Skipping sending AvoqadoTpv payment event ${row.ID} to backend`);
+            
+            // Update as successfully processed without publishing
+            const now = new Date().toISOString();
+            await pool.request()
+              .input('response', sql.NVarChar, 'Success - AvoqadoTpv payment (not sent to backend)')
+              .input('updateDate', sql.DateTimeOffset, now)
+              .input('id', sql.Int, row.ID)
+              .query(`
+                UPDATE PaymentEvents 
+                SET IsSuccess = 1, 
+                    IsFailed = 0, 
+                    Response = @response, 
+                    UpdateDate = @updateDate 
+                WHERE ID = @id
+              `);
+            
+            // Add to cache to prevent duplicate processing
+            cache.add(eventKey);
+            processedCount++;
+            
+            continue; // Skip to next payment
+          }
+
+          // Build message object
+          const message = {
+            venueId,
+            folio: row.Folio,
+            idFormaDePago: row.IdFormaDePago,
+            table: row.TableNumber,
+            operation: row.OperationType,
+            status: row.Status,
+            source: row.Source
+          }
+
+          // Add optional fields if present
+          if (row.Importe !== null) message.importe = row.Importe
+          if (row.Propina !== null) message.propina = row.Propina
+          if (row.WaiterId !== null) message.idWaiter = row.WaiterId
+
+          if (row.Referencia !== null) message.referencia = row.Referencia
+          if (row.WorkspaceId !== null) message.uniqueCodeFromPos = row.WorkspaceId
+          if (row.UniqueBillCodePos !== null) message.uniqueBillCodePos = row.UniqueBillCodePos
+          if (row.Method !== null) message.method = row.Method
+          if (row.OrderNumber !== null) message.order = row.OrderNumber
+          if (row.IsSplitTable !== null) message.is_split_table = row.IsSplitTable
+          if (row.MainTable !== null) message.main_table = row.MainTable
+          if (row.TpvId !== null) message.tpvId = row.TpvId
+
+          if (row.SplitSuffix !== null) message.split_suffix = row.SplitSuffix
+
+          // Publish to RabbitMQ
+          const publishResult = await publishEvent('PaymentEvents', message)
+
+          // Update with final result
+          const finalResponse = publishResult ? 'Published to RabbitMQ' : 'Failed to publish to RabbitMQ'
+          await pool.request()
+            .input('response', sql.NVarChar, finalResponse)
+            .input('updateDate', sql.DateTimeOffset, new Date().toISOString())
+            .input('id', sql.Int, row.ID)
+            .query(`
               UPDATE PaymentEvents 
-              SET IsSuccess = 0, 
-                  IsFailed = 1, 
-                  Response = @response, 
-                  UpdateDate = @updateDate 
+              SET IsSuccess = ${publishResult ? 1 : 0}, 
+                  IsFailed = ${publishResult ? 0 : 1}, 
+                  Response = @response 
               WHERE ID = @id
             `)
-        } catch (updateError) {
-          logError(`Failed to mark payment event ${row.ID} as failed: ${updateError.message}`)
+
+          // Add to cache to prevent duplicate processing
+          cache.add(eventKey)
+          processedCount++
+
+          logDebug(`Processed payment event ${row.ID} via change tracking`)
+        } catch (error) {
+          logError(`Error processing payment event ${row.ID}: ${error.message}`)
+
+          // Mark as failed
+          try {
+            const now = new Date().toISOString()
+            await pool.request()
+              .input('response', sql.NVarChar, `Error: ${error.message}`)
+              .input('updateDate', sql.DateTimeOffset, now)
+              .input('id', sql.Int, row.ID)
+              .query(`
+                UPDATE PaymentEvents 
+                SET IsSuccess = 0, 
+                    IsFailed = 1, 
+                    Response = @response, 
+                    UpdateDate = @updateDate 
+                WHERE ID = @id
+              `)
+          } catch (updateError) {
+            logError(`Failed to mark payment event ${row.ID} as failed: ${updateError.message}`)
+          }
         }
       }
-    }
 
-    // Update last version if changes were found
-    if (newVersion > lastChangeVersions[tableName]) {
-      lastChangeVersions[tableName] = newVersion
-      logInfo(`Updated last change version for ${tableName} to ${newVersion}`)
-    }
+      // Update last version if changes were found
+      if (newVersion > lastChangeVersions[tableName]) {
+        lastChangeVersions[tableName] = newVersion
+        logInfo(`Updated last change version for ${tableName} to ${newVersion}`)
+      }
 
-    logInfo(`Successfully processed ${processedCount} of ${result.recordset.length} payment events`)
-    return processedCount > 0
+      logInfo(`Successfully processed ${processedCount} of ${result.recordset.length} payment events`)
+      return processedCount > 0
+    } catch (error) {
+      // If any error occurs during transaction, roll it back
+      await transaction.rollback()
+      throw error
+    }
   } catch (error) {
     logError(`Error processing ${tableName} changes: ${error.message}`)
     return false

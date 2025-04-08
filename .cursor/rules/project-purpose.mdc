@@ -1,0 +1,33 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Rule Name: pos-integration-guidelines.mdc
+Description:
+POS Event Integration Service
+This application serves as a middleware integration service between point-of-sale (POS) systems and a central event processing system using RabbitMQ.
+Core Functionality:
+Database Change Tracking: Monitors SQL Server tables (TicketEvents, ProductEvents, PaymentEvents, TurnoEvents) for changes using SQL Server's change tracking.
+Event Publication: Publishes detected changes as structured messages to RabbitMQ queues with appropriate routing.
+Deduplication: Ensures each business event is processed exactly once, even with multiple POS terminals operating simultaneously.
+Transaction Management: Uses database transactions to prevent race conditions.
+Key Components:
+Change Tracking Service: Configures database change tracking, polls for changes at regular intervals.
+RabbitMQ Publisher: Reliably publishes events to queues with proper metadata and venue identification.
+Event Processing Logic: Transforms database records into standardized message formats for different event types.
+Business Events:
+Ticket Events: Opening, closing, splitting, or modifying customer bills/tickets
+Product Events: Adding, removing, or modifying ordered items
+Payment Events: Processing various payment methods (cash, credit card, etc.)
+Shift Events (Turnos): Opening/closing cash register shifts with financial reconciliation
+Design Principles:
+Reliability: Events must be delivered exactly once
+Performance: Minimize database load while ensuring timely event processing
+Scalability: Support multiple POS terminals and concurrent processing
+Error Handling: Proper logging and recovery from failures
+Transaction Handling Guidelines:
+All event processing functions should use SERIALIZABLE transactions
+Queries should filter out records already being processed (Response IS NULL)
+Records should be marked as "processing" within a transaction before publishing
+Use strong deduplication keys based on business identifiers (WorkspaceId, UniqueBillCodePos)

@@ -51,7 +51,7 @@ GO
 
 
 -- tempcheques
-CREATE TRIGGER [dbo].[trgChequeActualizado]
+ALTER TRIGGER [dbo].[trgChequeActualizado]
 ON [dbo].[tempcheques]
 AFTER INSERT, UPDATE, DELETE
 AS
@@ -146,6 +146,9 @@ BEGIN
                OR i.mesa <> d.mesa
                OR i.impreso <> d.impreso
                OR i.cuentaenuso <> d.cuentaenuso
+			   OR i.descuento <> d.descuento
+			   OR i.idmesero <> d.idmesero -- ADD THIS
+
         )
         BEGIN
             -- No meaningful changes, so exit without recording anything
@@ -157,7 +160,10 @@ BEGIN
                 @canceladoChanged BIT = 0,
                 @mesaChanged BIT = 0,
                 @impresoChanged BIT = 0,
-                @cuentaenusoChanged BIT = 0;
+                @cuentaenusoChanged BIT = 0,
+				@descuentoChanged BIT = 0,
+				@waiterChanged BIT = 0;       -- ADD THIS
+
                 
         SELECT TOP 1 
             @pagadoChanged = CASE WHEN i.pagado <> d.pagado THEN 1 ELSE 0 END,
@@ -165,6 +171,7 @@ BEGIN
             @mesaChanged = CASE WHEN i.mesa <> d.mesa THEN 1 ELSE 0 END,
             @impresoChanged = CASE WHEN i.impreso <> d.impreso THEN 1 ELSE 0 END,
             @cuentaenusoChanged = CASE WHEN i.cuentaenuso <> d.cuentaenuso THEN 1 ELSE 0 END,
+			@descuentoChanged = CASE WHEN (i.descuento <> d.descuento OR i.descuentoimporte <> d.descuentoimporte) THEN 1 ELSE 0 END,
             @Ticket = i.folio
         FROM inserted i
         JOIN deleted d ON i.folio = d.folio;
@@ -188,7 +195,7 @@ BEGIN
             RETURN;
         END
         
-        -- MEJORADO: Detección de Renombra Cuenta usando la columna valores
+        -- MEJORADO: DetecciÃ³n de Renombra Cuenta usando la columna valores
         IF EXISTS(
             SELECT 1 
             FROM inserted i
@@ -202,9 +209,9 @@ BEGIN
             )
         )
         BEGIN
-            -- Esta es una operación de renombrar cuenta confirmada
+            -- Esta es una operaciÃ³n de renombrar cuenta confirmada
             
-            -- Obtener la información del evento de renombrar cuenta más reciente
+            -- Obtener la informaciÃ³n del evento de renombrar cuenta mÃ¡s reciente
             SELECT TOP 1 
                 @RenameEventValues = valores
             FROM bitacorasistema 
@@ -212,7 +219,7 @@ BEGIN
             AND DATEDIFF(SECOND, fecha, GETDATE()) <= 5
             ORDER BY fecha DESC;
             
-            -- Extraer información clave del campo valores
+            -- Extraer informaciÃ³n clave del campo valores
             -- Extrae la mesa anterior: "Cuenta Anterior: X"
             IF CHARINDEX('Cuenta anterior: ', @RenameEventValues) > 0
             BEGIN
@@ -235,7 +242,7 @@ BEGIN
                 SET @NewTableName = LTRIM(RTRIM(@NewTableName));
             END
             
-            -- Información del ticket que fue renombrado
+            -- InformaciÃ³n del ticket que fue renombrado
             SELECT TOP 1 
                 @Ticket = i.folio, 
                 @OldMesa = d.mesa,
@@ -267,8 +274,8 @@ BEGIN
                 Folio, 
                 TableNumber, 
                 OrderNumber, 
-                EventType,     -- Usamos RENAMED como tipo específico
-                OperationType, -- UPDATE como operación general
+                EventType,     -- Usamos RENAMED como tipo especÃ­fico
+                OperationType, -- UPDATE como operaciÃ³n general
                 ShiftId,
                 ShiftState,
                 IsSplitOperation,
@@ -277,7 +284,7 @@ BEGIN
                 Total,
                 Descuento,
                 UniqueCode,
-                OriginalTable, -- Almacenamos la mesa original aquí
+                OriginalTable, -- Almacenamos la mesa original aquÃ­
                 SourceEvent,   -- Guardamos el evento fuente
           
                 IsProcessed,
@@ -286,32 +293,32 @@ BEGIN
             VALUES (
                 @Ticket,        -- Folio del ticket
                 @Mesa,          -- Nueva mesa
-                @Order,         -- Número de orden
-                'RENAMED',      -- Tipo específico: RENAMED
-                'UPDATE',       -- Operación general: UPDATE
+                @Order,         -- NÃºmero de orden
+                'RENAMED',      -- Tipo especÃ­fico: RENAMED
+                'UPDATE',       -- OperaciÃ³n general: UPDATE
                 @ShiftId,       -- ID del turno
                 @ShiftState,    -- Estado del turno
-                0,              -- No es una operación de split
+                0,              -- No es una operaciÃ³n de split
                 @idMesero,      -- ID del mesero
                 @NombreMesero,  -- Nombre del mesero
                 @Total,         -- Total
                 @Descuento,     -- Descuento
-                @UniqueCode,    -- Código único
+                @UniqueCode,    -- CÃ³digo Ãºnico
                 @OldMesa,       -- Mesa original (antes del cambio)
                 @RenameEventValues, -- Evento fuente completo
            
                 0,              -- No procesado inicialmente
-                GETDATE()       -- Fecha de creación
+                GETDATE()       -- Fecha de creaciÃ³n
             );
             
-            -- No seguimos con el procesamiento normal ya que lo hemos manejado específicamente
+            -- No seguimos con el procesamiento normal ya que lo hemos manejado especÃ­ficamente
             RETURN;
         END
         
         -- ENHANCED: Division de cuenta detection, better match with actual POS behavior
         -- We need to detect both when:
         -- 1. A table's usage flag changes (cuentaenuso goes from 1 to 0)
-        -- 2. The bitacorasistema has a recent "División de cuenta" entry
+        -- 2. The bitacorasistema has a recent "DivisiÃ³n de cuenta" entry
         IF EXISTS(
             SELECT 1 
             FROM inserted i
@@ -321,21 +328,21 @@ BEGIN
             AND EXISTS (
                 SELECT 1
                 FROM bitacorasistema 
-                WHERE evento LIKE '%División de cuenta%'
+                WHERE evento LIKE '%DivisiÃ³n de cuenta%'
                 AND DATEDIFF(SECOND, fecha, GETDATE()) <= 10  -- Extended time window
             )
         )
         BEGIN
-            -- Esta es una operación de división de cuenta confirmada
+            -- Esta es una operaciÃ³n de divisiÃ³n de cuenta confirmada
             
-            -- Obtener la información del evento de división de cuenta más reciente
+            -- Obtener la informaciÃ³n del evento de divisiÃ³n de cuenta mÃ¡s reciente
             SELECT TOP 1 
                 @SplitEventValues = valores FROM bitacorasistema 
-            WHERE evento LIKE '%División de cuenta%'
+            WHERE evento LIKE '%DivisiÃ³n de cuenta%'
             AND DATEDIFF(SECOND, fecha, GETDATE()) <= 10
             ORDER BY fecha DESC;
             
-            -- Extraer información clave del campo valores
+            -- Extraer informaciÃ³n clave del campo valores
             -- Extrae la mesa original: "Cuenta: X"
             DECLARE @CuentaPos INT = CHARINDEX('Cuenta: ', @SplitEventValues);
             DECLARE @SeAbrieronPos INT = CHARINDEX('Se abrieron', @SplitEventValues);
@@ -384,7 +391,7 @@ BEGIN
                 'SISTEMA'
             );
             
-            -- Información de la mesa original que fue dividida
+            -- InformaciÃ³n de la mesa original que fue dividida
             SELECT TOP 1 
                 @OriginalFolio = i.folio, 
                 @OriginalMesa = i.mesa,
@@ -404,7 +411,7 @@ BEGIN
             WHERE i.cuentaenuso = 0 AND d.cuentaenuso = 1;
             
             -- Determinar el estado del turno
-            SET @ShiftState = 'OPEN'; -- Por defecto, asumimos que está abierto
+            SET @ShiftState = 'OPEN'; -- Por defecto, asumimos que estÃ¡ abierto
             IF EXISTS (
                 SELECT 1 FROM turnos WHERE idturno = @ShiftId AND cierre IS NOT NULL
             )
@@ -490,13 +497,13 @@ BEGIN
             )
             VALUES (
                 @OriginalFolio,   -- Folio
-                @OriginalMesa,    -- Número de mesa
-                @OriginalOrder,   -- Número de orden
+                @OriginalMesa,    -- NÃºmero de mesa
+                @OriginalOrder,   -- NÃºmero de orden
                 'SPLIT',          -- Tipo de evento
-                'SPLIT',          -- Tipo de operación
+                'SPLIT',          -- Tipo de operaciÃ³n
                 @ShiftId,         -- ID del turno
                 @ShiftState,      -- Estado del turno
-                1,                -- Es una operación de split
+                1,                -- Es una operaciÃ³n de split
                 'PARENT',         -- Rol en el split (es la mesa original/padre)
                 @OriginalMesa,    -- Mesa original (la misma)
                 @NewTablesText,   -- Todas las mesas hijas como texto
@@ -506,11 +513,11 @@ BEGIN
                 @NombreMesero,    -- Nombre del mesero
                 @Total,           -- Total
                 @Descuento,       -- Descuento
-                @UniqueCode,      -- Código único
+                @UniqueCode,      -- CÃ³digo Ãºnico
                 @SplitEventValues,-- Evento fuente
 
                 0,                -- No procesado inicialmente
-                GETDATE()         -- Fecha de creación
+                GETDATE()         -- Fecha de creaciÃ³n
             );
             
             -- CHILD BILLS: Also register each split bill individually
@@ -887,7 +894,9 @@ BEGIN
         WHERE i.pagado <> d.pagado
            OR i.cancelado <> d.cancelado
            OR i.mesa <> d.mesa
-           OR i.impreso <> d.impreso;
+           OR i.impreso <> d.impreso
+		   OR i.descuento <> d.descuento
+		   OR i.idmesero <> d.idmesero; 
 
         OPEN update_cursor;
         FETCH NEXT FROM update_cursor INTO @Ticket, @Mesa, @Order, @idMesero, @ShiftId, @Status, @Impreso, 
@@ -956,6 +965,7 @@ BEGIN
                 Total,
                 Descuento,
                 UniqueCode,
+				OriginalTable,
                 IsProcessed,
                 CreateDate
             )
@@ -973,6 +983,8 @@ BEGIN
                 @Total,            -- Total
                 @Descuento,        -- Discount
                 @UniqueCode,       -- Unique code
+				    CASE WHEN @Mesa <> @OldMesa THEN @OldMesa ELSE NULL END,  -- ADD THIS
+
                 0,                 -- Not processed initially
                 GETDATE()          -- Creation date
             );
@@ -1111,6 +1123,8 @@ BEGIN
         DEALLOCATE deleted_cursor;
     END
 END
+
+
 GO
 
 --tempcheqdet
@@ -1244,7 +1258,7 @@ BEGIN
                 UniqueCode,                -- Product's unique code
                 uniqueBillCodeFromPos,     -- Bill's unique code
                 
-                -- Campos específicos de productos
+                -- Campos especï¿½ficos de productos
                 IdProducto,
                 NombreProducto,
                 Movimiento,
@@ -1559,7 +1573,7 @@ BEGIN
                 UniqueCode,                -- Product's unique code
                 uniqueBillCodeFromPos,     -- Bill's unique code
                 
-                -- Campos específicos de productos
+                -- Campos especï¿½ficos de productos
                 IdProducto,
                 NombreProducto,
                 Movimiento,
@@ -1615,7 +1629,7 @@ ALTER TABLE [dbo].[tempcheqdet] WITH NOCHECK
 GO
 
 --tempchequespagos
-CREATE TRIGGER [dbo].[trgChequePagoActualizado]
+ALTER TRIGGER [dbo].[trgChequePagoActualizado]
 ON [dbo].[tempchequespagos]
 AFTER INSERT
 AS
@@ -1629,14 +1643,16 @@ BEGIN
             @Propina NVARCHAR(100),
             @Referencia NVARCHAR(100),
             @UniqueCode NVARCHAR(100),
-            @UniqueBillCodePos NVARCHAR(100), -- Added this to store bill's unique code
+            @UniqueBillCodePos NVARCHAR(100),
             @Mesa NVARCHAR(100),
             @IsSplitTable BIT,
             @MainTable NVARCHAR(100),
             @SplitSuffix NVARCHAR(10),
             @Orden INT,
             @OriginalOrden INT,
-            @Method INT;             -- Added to store the payment method type
+            @Method INT,
+            @TpvId NVARCHAR(100),
+            @WaiterId NVARCHAR(100);
 
     IF EXISTS(SELECT * FROM inserted) -- It's an INSERT
     BEGIN
@@ -1660,12 +1676,36 @@ BEGIN
             SET @OriginalFolio = @Folio;
             SET @OriginalOrden = NULL; -- Will retrieve from tempcheques
             SET @UniqueBillCodePos = NULL; -- Initialize bill's unique code
+            SET @TpvId = NULL; -- Initialize TPV ID
+            SET @WaiterId = NULL; -- Initialize Waiter ID
 
-            -- Retrieve mesa, orden, and WorkspaceId (unique code) from tempcheques
+            -- Extract TPV ID from referencia if it exists
+            IF @Referencia LIKE '%TPV:%'
+            BEGIN
+                DECLARE @TpvStart INT, @TpvEnd INT;
+                SET @TpvStart = CHARINDEX('TPV:', @Referencia) + 4; -- Position after "TPV:"
+                
+                -- Find the end of the TPV ID (either a comma, space, or end of string)
+                SET @TpvEnd = CHARINDEX(',', @Referencia, @TpvStart);
+                IF @TpvEnd = 0 -- No comma found
+                    SET @TpvEnd = CHARINDEX(' ', @Referencia, @TpvStart);
+                    
+                IF @TpvEnd = 0 -- No space found either, use end of string
+                    SET @TpvEnd = LEN(@Referencia) + 1;
+                    
+                -- Extract the TPV ID
+                SET @TpvId = SUBSTRING(@Referencia, @TpvStart, @TpvEnd - @TpvStart);
+                
+                -- Trim any whitespace
+                SET @TpvId = LTRIM(RTRIM(@TpvId));
+            END
+
+            -- Retrieve mesa, orden, idmesero, and WorkspaceId (unique code) from tempcheques
             SELECT 
                 @Mesa = tc.mesa, 
                 @Orden = tc.orden,
-                @UniqueBillCodePos = tc.WorkspaceId -- Get the bill's unique code
+                @UniqueBillCodePos = tc.WorkspaceId, -- Get the bill's unique code
+                @WaiterId = tc.idmesero -- Get the waiter ID
             FROM tempcheques tc
             WHERE tc.folio = @Folio;
             
@@ -1730,7 +1770,10 @@ BEGIN
                 SplitSuffix,
                 Status,
                 OperationType,
-                Method              -- Added column for payment method type
+                Method,             -- Added column for payment method type
+                Source,             -- Added column for payment source
+                TpvId,              -- Added column for TPV ID
+                WaiterId            -- Added column for Waiter ID
             )
             VALUES (
                 @Folio,
@@ -1747,7 +1790,10 @@ BEGIN
                 @SplitSuffix,
                 'PAYMENT_ADDED',
                 'INSERT',
-                @Method             -- Insert payment method type
+                @Method,            -- Insert payment method type
+                CASE WHEN @Referencia LIKE '%AvoqadoTpv%' THEN 'AVOQADO_TPV' ELSE 'POS' END,  -- Set Source based on Referencia
+                @TpvId,             -- Insert TPV ID
+                @WaiterId           -- Insert Waiter ID
             );
 
             FETCH NEXT FROM inserted_cursor INTO @Folio, @IdFormaDePago, @Importe, @Propina, @Referencia, @UniqueCode;
@@ -1757,6 +1803,7 @@ BEGIN
         DEALLOCATE inserted_cursor;
     END
 END;
+
 GO
 
 ALTER TABLE [dbo].[tempchequespagos] WITH NOCHECK
