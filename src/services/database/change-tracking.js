@@ -23,6 +23,9 @@ const processedEventsCache = {
   TurnoEvents: new Set()
 }
 
+// NEW: Track active split bill operations to deduplicate across related bills
+const activeSplitOperations = new Map()
+
 // Maximum size for the cache
 const MAX_CACHE_SIZE = 1000
 
@@ -67,6 +70,9 @@ export async function setupChangeTracking(dbPool, configuredVenueId) {
 
     // Set up cache cleanup
     setInterval(cleanupCache, CACHE_TTL / 2)
+    
+    // NEW: Set up split operation cleanup
+    setInterval(cleanupSplitOperations, 5 * 60 * 1000)
 
     logInfo('Change tracking has been set up successfully')
     return true
@@ -167,6 +173,29 @@ function cleanupCache() {
 }
 
 /**
+ * NEW: Cleanup for split operations tracking
+ */
+function cleanupSplitOperations() {
+  try {
+    const now = Date.now()
+    let count = 0
+    
+    for (const [key, operation] of activeSplitOperations.entries()) {
+      if ((now - operation.startTime) > 10 * 60 * 1000) { // 10 minutes
+        activeSplitOperations.delete(key)
+        count++
+      }
+    }
+    
+    if (count > 0) {
+      logInfo(`Cleaned up ${count} expired split operations`)
+    }
+  } catch (error) {
+    logError(`Error cleaning up split operations: ${error.message}`)
+  }
+}
+
+/**
  * Start monitoring for database changes
  */
 export function startChangeTracking() {
@@ -261,9 +290,67 @@ async function processTicketChanges() {
 
         // Create a unique identifier for this event to prevent duplicates
         const eventKey = `${row.ID}-${row.EventType}-${row.Folio}`
+        
+        // Enhanced split bill handling
+        if (row.EventType === 'SPLIT' || (row.IsSplitOperation === true || row.IsSplitOperation === 1)) {
+          // Create a consistent key for the split operation
+          // Gather all related bill numbers
+          const components = []
+          if (row.Folio) components.push(row.Folio)
+          if (row.SplitFolios) components.push(...row.SplitFolios.split(',').map(f => f.trim()).filter(f => f))
+          if (row.ParentFolio) components.push(row.ParentFolio)
+          
+          // Create a unique identifier for this split operation
+          const uniqueBills = [...new Set(components)].sort()
+          const splitOperationKey = `split-${venueId}-${uniqueBills.join('-')}`
+          
+          // Track this split operation for product deduplication
+          if (!activeSplitOperations.has(splitOperationKey)) {
+            activeSplitOperations.set(splitOperationKey, {
+              startTime: Date.now(),
+              parentBill: row.Folio,
+              bills: uniqueBills,
+              processedProducts: new Set(),
+              // Track deletions specifically to allow them
+              allowDeletions: true
+            })
+            
+            logInfo(`Tracking new split operation: ${splitOperationKey} with bills: ${uniqueBills.join(', ')}`)
+          }
+          
+          // Also store the split operation key in the event
+          row.splitOperationKey = splitOperationKey
+        }
 
         // Skip if we've already processed this exact event recently
-        if (cache.has(eventKey)) {
+        // BUT ALWAYS process DELETED events for bills - they should never be skipped
+        // EXCEPT when ShiftState is CLOSED (part of shift closure)
+        const isDeleteOperation = row.EventType === 'DELETED' || (row.OperationType === 'DELETE');
+        const isShiftClosure = isDeleteOperation && row.ShiftState === 'CLOSED';
+        
+        // Skip deletions that are part of shift closure
+        if (isShiftClosure) {
+          logInfo(`Skipping bill deletion that is part of shift closure: ${row.Folio}`);
+          
+          // Mark as processed
+          const now = new Date().toISOString();
+          await pool.request()
+            .input('processedDate', sql.DateTimeOffset, now)
+            .input('response', sql.NVarChar, 'Skipped - part of shift closure')
+            .input('updateDate', sql.DateTimeOffset, now)
+            .input('id', sql.Int, row.ID)
+            .query(`
+              UPDATE TicketEvents 
+              SET IsProcessed = 1, 
+                  ProcessedDate = @processedDate, 
+                  Response = @response, 
+                  UpdateDate = @updateDate 
+              WHERE ID = @id
+            `);
+          continue;
+        }
+        
+        if (cache.has(eventKey) && !isDeleteOperation) {
           logDebug(`Skipping already processed event: ${eventKey}`)
 
           // Still mark it as processed in the database
@@ -279,6 +366,11 @@ async function processTicketChanges() {
             `)
           continue
         }
+        
+        // If this is a delete operation that would otherwise be skipped, log it
+        if (cache.has(eventKey) && isDeleteOperation) {
+          logInfo(`Processing bill deletion event despite cache hit: ${eventKey}`)
+        }
 
         // Build message object
         const message = {
@@ -290,25 +382,45 @@ async function processTicketChanges() {
           idWaiter: row.WaiterId,
           waiterName: row.WaiterName,
           operation: row.OperationType,
-          uniqueCodeFromPos: row.UniqueCode
+          uniqueCodeFromPos: row.UniqueCode,
+          mainBillUniqueCodeForBillSplitting: row.MainBillUniqueCodeForBillSplitting
         }
 
         // Add financial data if available
         if (row.Descuento !== null) message.descuento = row.Descuento
         if (row.Total !== null) message.total = row.Total
 
-        // Add split operation details if applicable
-        if (row.IsSplitOperation) {
+        // Enhanced split operation details
+        if (row.IsSplitOperation === true || row.IsSplitOperation === 1) {
           message.isSplit = true
 
           if (row.SplitRole === 'PARENT') {
             message.splitType = 'ORIGINAL'
-            message.relatedFolio = row.SplitFolios
+            
+            // Ensure splitFolios is clean by splitting and rejoining
+            if (row.SplitFolios) {
+              // Parse the SplitFolios into an array, removing duplicates and empty values
+              const folios = [...new Set(row.SplitFolios.split(',').map(f => f.trim()).filter(f => f))]
+              message.relatedFolio = folios.join(',')
+            } else {
+              message.relatedFolio = row.SplitFolios
+            }
+            
             message.splitTables = row.SplitTables
+            
+            // Store the split operation key for reference
+            if (row.splitOperationKey) {
+              message._splitOperationKey = row.splitOperationKey
+            }
           } else if (row.SplitRole === 'CHILD') {
             message.splitType = 'NEW'
             message.relatedFolio = row.ParentFolio
             message.originalTable = row.OriginalTable
+            
+            // Store the split operation key for reference
+            if (row.splitOperationKey) {
+              message._splitOperationKey = row.splitOperationKey
+            }
           }
         }
 
@@ -405,6 +517,9 @@ async function processProductChanges() {
     let newVersion = lastChangeVersions[tableName]
     let processedCount = 0
     const cache = processedEventsCache[tableName]
+    
+    // Track unique products within this processing batch to avoid duplicates
+    const processedProductsInBatch = new Set()
 
     for (const row of result.recordset) {
       try {
@@ -413,24 +528,105 @@ async function processProductChanges() {
           newVersion = row.SYS_CHANGE_VERSION
         }
 
-        // Create a unique identifier for this event to prevent duplicates
+        // Create deduplication keys
         const eventKey = `${row.ID}-${row.Status}-${row.Folio}-${row.IdProducto}`
-
-        // Skip if we've already processed this exact event recently
-        if (cache.has(eventKey)) {
-          logDebug(`Skipping already processed product event: ${eventKey}`)
-
-          // Still mark it as processed in the database
-          const now = new Date().toISOString()
-          await pool.request().input('response', sql.NVarChar, 'Skipped - duplicate event').input('updateDate', sql.DateTimeOffset, now).input('id', sql.Int, row.ID).query(`
+        const productMovementKey = `${row.uniqueBillCodeFromPos || ''}-${row.IdProducto}-${row.Movimiento}-${row.Cantidad || ''}-${row.Status}`
+        
+        // Check if this is a deletion related to a shift closure
+        const isDeleteOperation = row.Status === 'PRODUCT_REMOVED' || row.OperationType === 'DELETE' || row.Movimiento === -1;
+        const isShiftClosure = isDeleteOperation && row.ShiftState === 'CLOSED';
+        
+        // Skip product deletions that are part of shift closure
+        if (isShiftClosure) {
+          logInfo(`Skipping product deletion that is part of shift closure: ${row.IdProducto} on bill ${row.Folio}`);
+          
+          // Mark as processed
+          const now = new Date().toISOString();
+          await pool.request()
+            .input('response', sql.NVarChar, 'Skipped - product deletion during shift closure')
+            .input('updateDate', sql.DateTimeOffset, now)
+            .input('id', sql.Int, row.ID)
+            .query(`
               UPDATE ProductEvents 
               SET IsSuccess = 1, 
                   IsFailed = 0, 
                   Response = @response, 
                   UpdateDate = @updateDate 
               WHERE ID = @id
-            `)
-          continue
+            `);
+          continue;
+        }
+        
+        // Special handling for split operations
+        let isSplitOperation = false
+        let splitOperationKey = null
+        let shouldAllowDeletion = false
+        
+        // Check if this product is part of an active split operation
+        if (row.IsSplitTable === true || row.IsSplitTable === 1 || row.MainTable) {
+          // Look for active split operations that might contain this bill
+          for (const [key, operation] of activeSplitOperations.entries()) {
+            if (operation.bills.includes(row.Folio)) {
+              isSplitOperation = true
+              splitOperationKey = key
+              
+              // For deletions related to split operations, we need to process them
+              if (row.Status === 'PRODUCT_REMOVED' && (row.OperationType === 'DELETE' || row.Movimiento === -1)) {
+                shouldAllowDeletion = true
+                logDebug(`Allowing product deletion during split operation: ${row.IdProducto} on bill ${row.Folio}`)
+              }
+              
+              break
+            }
+          }
+        }
+        
+        // Determine if we should skip this record
+        let skipProcessing = false;
+        let skipReason = '';
+        
+        // Only apply standard deduplication if this isn't a deletion as part of a split operation
+        if (!shouldAllowDeletion) {
+          if (cache.has(eventKey)) {
+            skipProcessing = true;
+            skipReason = 'Skipped - duplicate event (cache hit)';
+          } else if (processedProductsInBatch.has(productMovementKey)) {
+            skipProcessing = true;
+            skipReason = 'Skipped - duplicate event (batch hit)';
+          }
+        } else {
+          // For deletions in split operations, we use a different approach for deduplication
+          // We'll still process the first instance of a deletion, but skip any subsequent ones
+          // with the same characteristics
+          const splitProductKey = `split-delete-${row.Folio}-${row.IdProducto}-${row.Movimiento}`;
+          
+          if (processedProductsInBatch.has(splitProductKey)) {
+            skipProcessing = true;
+            skipReason = 'Skipped - duplicate split deletion';
+          } else {
+            processedProductsInBatch.add(splitProductKey);
+          }
+        }
+        
+        // Skip processing if needed
+        if (skipProcessing) {
+          logDebug(`${skipReason}: ${eventKey}`);
+          
+          // Still mark it as processed in the database
+          const now = new Date().toISOString();
+          await pool.request()
+            .input('response', sql.NVarChar, skipReason)
+            .input('updateDate', sql.DateTimeOffset, now)
+            .input('id', sql.Int, row.ID)
+            .query(`
+              UPDATE ProductEvents 
+              SET IsSuccess = 1, 
+                  IsFailed = 0, 
+                  Response = @response, 
+                  UpdateDate = @updateDate 
+              WHERE ID = @id
+            `);
+          continue;
         }
 
         // Build message object
@@ -457,9 +653,18 @@ async function processProductChanges() {
         if (row.Hora !== null) message.hora = row.Hora
         if (row.Modificador !== null) message.modificador = row.Modificador
         if (row.Clasificacion !== null) message.clasificacion = row.Clasificacion
+        
+        // Add split-related fields
         if (row.IsSplitTable !== null) message.isSplitTable = row.IsSplitTable
         if (row.MainTable !== null) message.mainTable = row.MainTable
         if (row.SplitSuffix !== null) message.splitSuffix = row.SplitSuffix
+        
+        // Add split operation tracking
+        if (isSplitOperation) {
+          message.isSplitOperation = true
+          if (splitOperationKey) message._splitOperationKey = splitOperationKey
+          if (shouldAllowDeletion) message.isSplitDeletion = true
+        }
 
         // Publish to RabbitMQ
         const publishResult = await publishEvent('ProductEvents', message)
@@ -477,8 +682,9 @@ async function processProductChanges() {
             WHERE ID = @id
           `)
 
-        // Add to cache to prevent duplicate processing
+        // Add to deduplication mechanisms
         cache.add(eventKey)
+        processedProductsInBatch.add(productMovementKey)
         processedCount++
 
         logDebug(`Processed product event ${row.ID} via change tracking`)
@@ -598,7 +804,7 @@ async function processPaymentChanges() {
             logDebug(`Skipping already processed payment event: ${eventKey || strongUniqueKey}`)
 
             // Update with "skipped" status
-            const now = new Date().toISOString()
+            const now = new Date().toISOString();
             await pool.request()
               .input('response', sql.NVarChar, 'Skipped - duplicate event')
               .input('updateDate', sql.DateTimeOffset, now)
@@ -610,8 +816,13 @@ async function processPaymentChanges() {
                     Response = @response, 
                     UpdateDate = @updateDate 
                 WHERE ID = @id
-              `)
-            continue
+              `);
+            
+            // Add to cache to prevent duplicate processing
+            cache.add(eventKey);
+            processedCount++;
+            
+            continue; // Skip to next payment
           }
 
           // Add to our batch deduplication set before processing
@@ -662,8 +873,6 @@ async function processPaymentChanges() {
           // Add optional fields if present
           if (row.Importe !== null) message.importe = row.Importe
           if (row.Propina !== null) message.propina = row.Propina
-          if (row.WaiterId !== null) message.idWaiter = row.WaiterId
-
           if (row.Referencia !== null) message.referencia = row.Referencia
           if (row.WorkspaceId !== null) message.uniqueCodeFromPos = row.WorkspaceId
           if (row.UniqueBillCodePos !== null) message.uniqueBillCodePos = row.UniqueBillCodePos

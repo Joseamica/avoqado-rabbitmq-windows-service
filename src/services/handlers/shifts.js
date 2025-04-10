@@ -113,6 +113,162 @@ export async function handleGetShifts(data, correlationId) {
   }
 }
 
+/**
+ * Handle OPEN_SHIFT operation
+ * @param {Object} data - Request data including userId (cashier/waiter)
+ * @param {string} correlationId - Correlation ID for tracking request-response
+ */
+export async function handleOpenShift(data, correlationId) {
+  const hostname = getHostname()
+  const venueId = data.venueId || 'madre_cafecito'
+  const userId = data.userId || ''
+  const initialFund = data.initialFund || 0
+  const initialFundDollars = data.initialFundDollars || 0
+  let transaction
+
+  try {
+    pool = await initPool()
+    transaction = new Transaction(pool)
+    await transaction.begin()
+
+    // 1. Get station data
+    let request = transaction.request()
+    const stationQuery = await request.input('hostname', hostname).query(`
+      SELECT idestacion, seriefolio FROM estaciones WHERE idestacion = @hostname
+    `)
+
+    if (!stationQuery.recordset.length) {
+      await transaction.rollback()
+      await sendResponse(
+        'OPEN_SHIFT_ERROR',
+        {
+          message: 'Estación no encontrada.'
+        },
+        correlationId,
+        venueId
+      )
+      return
+    }
+
+    const { idestacion } = stationQuery.recordset[0]
+
+    // 2. Check if there's already an open shift
+    request = transaction.request()
+    const openShiftQuery = await request.input('idestacion', idestacion).query(`
+      SELECT * FROM turnos 
+      WHERE cierre IS NULL AND apertura IS NOT NULL 
+      AND idestacion = @idestacion AND idempresa = '0000000001'
+    `)
+
+    if (openShiftQuery.recordset.length > 0) {
+      await transaction.rollback()
+      await sendResponse(
+        'OPEN_SHIFT_ERROR',
+        {
+          message: 'Ya existe un turno abierto para esta estación.'
+        },
+        correlationId,
+        venueId
+      )
+      return
+    }
+
+    // 3. Get the next shift ID from parametros
+    request = transaction.request()
+    const nextShiftQuery = await request.query(`
+      SELECT ultimoturno FROM parametros
+    `)
+    
+    const ultimoTurno = nextShiftQuery.recordset[0]?.ultimoturno || 0
+    const newShiftId = ultimoTurno + 1
+
+    // 4. Get the current date/time
+    const now = new Date()
+    const formattedDateTime = now.toISOString().replace('T', ' ').substr(0, 19)
+    const sqlFormattedDate = now.toLocaleDateString('en-US', {
+      month: '2-digit', 
+      day: '2-digit',
+      year: 'numeric'
+    }) + ' ' + now.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    })
+
+    // 5. Insert the new shift
+    request = transaction.request()
+    await request
+      .input('idturno', newShiftId)
+      .input('fondo', initialFund)
+      .input('apertura', sqlFormattedDate)
+      .input('idestacion', idestacion)
+      .input('cajero', userId)
+      .input('idempresa', '0000000001')
+      .input('idmesero', '')
+      .input('fondodolares', initialFundDollars)
+      .query(`
+        INSERT INTO turnos (idturno, fondo, apertura, idestacion, cajero, idempresa, idmesero, fondodolares) 
+        VALUES (@idturno, @fondo, @apertura, @idestacion, @cajero, @idempresa, @idmesero, @fondodolares)
+      `)
+
+    // 6. Insert into bitacoraenvioventas
+    request = transaction.request()
+    await request
+      .input('fechaapertura', now.toISOString())
+      .query(`
+        INSERT INTO bitacoraenvioventas (fechaapertura) VALUES (@fechaapertura)
+      `)
+
+    // 7. Update parametros with the new ultimoturno
+    request = transaction.request()
+    await request
+      .input('newShiftId', newShiftId)
+      .query(`
+        UPDATE parametros SET ultimoturno = @newShiftId
+      `)
+
+    // 8. Commit the transaction
+    await transaction.commit()
+
+    console.log(`✅ Turno abierto correctamente para la estación: ${idestacion}, ID: ${newShiftId}`)
+    await sendResponse(
+      'OPEN_SHIFT_SUCCESS',
+      {
+        message: 'Turno abierto correctamente.',
+        turno: {
+          idturno: newShiftId,
+          cajero: userId,
+          idestacion
+        }
+      },
+      correlationId
+    )
+  } catch (error) {
+    console.error('❌ Error al abrir turno:', error.message || error)
+    logError(`Error opening shift: ${error.message}`)
+
+    // If there's an error, rollback the transaction if it was open
+    if (transaction) {
+      try {
+        await transaction.rollback()
+        console.log('🔄 Transacción revertida.')
+      } catch (rollbackError) {
+        console.error('⚠️ Error al revertir la transacción:', rollbackError)
+      }
+    }
+
+    await sendResponse(
+      'OPEN_SHIFT_ERROR',
+      {
+        message: 'Error interno al abrir el turno. Intente de nuevo.'
+      },
+      correlationId
+    )
+  }
+}
+
 export default {
-  handleGetShifts
+  handleGetShifts,
+  handleOpenShift
 }

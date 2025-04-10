@@ -172,6 +172,9 @@ function setupConsumers(requestQueue) {
         case 'GET_SHIFTS':
           await handlers.shifts.handleGetShifts(content.data, correlationId)
           break
+        case 'OPEN_SHIFT':
+          await handlers.shifts.handleOpenShift(content.data, correlationId)
+          break
         case 'GET_WAITERS':
           await handlers.waiters.handleGetWaiters(content.data, correlationId)
           break
@@ -180,6 +183,9 @@ function setupConsumers(requestQueue) {
           break
         case 'PRINT_AND_PAY':
           await handlers.payments.handlePrintAndPay(content.data, correlationId)
+          break
+        case 'PARTIAL_PAYMENT':
+          await handlers.payments.handlePartialPayment(content.data, correlationId)
           break
         default:
           logInfo(`Unknown operation type: ${content.operation}`)
@@ -228,7 +234,6 @@ function setupConsumers(requestQueue) {
 
   logInfo(`Message consumers set up successfully for venue: ${venueId}`)
 }
-
 // Send response back to cloud
 export async function sendResponse(operation, data, correlationId) {
   try {
