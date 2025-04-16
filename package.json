@@ -18,7 +18,6 @@
     "legacy_install-service": "node scripts/installer/install-service.cjs",
     "legacy_uninstall-service": "node scripts/installer/uninstall-service.cjs",
     "legacy_package": "node scripts/installer/download-icon.js && electron-builder --win portable --x64 --config.forceCodeSigning=false",
-
     "build": "node scripts/installer/build-for-terminal-installation",
     "electron": "electron scripts/installer/main.cjs",
     "download-icon": "node scripts/installer/download-icon.js",

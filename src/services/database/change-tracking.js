@@ -26,6 +26,9 @@ const processedEventsCache = {
 // NEW: Track active split bill operations to deduplicate across related bills
 const activeSplitOperations = new Map()
 
+// NEW: Track FAST ticket events to delay related payments
+const fastTicketEvents = new Map() // Map to store FAST events by their UniqueCode
+
 // Maximum size for the cache
 const MAX_CACHE_SIZE = 1000
 
@@ -73,6 +76,9 @@ export async function setupChangeTracking(dbPool, configuredVenueId) {
     
     // NEW: Set up split operation cleanup
     setInterval(cleanupSplitOperations, 5 * 60 * 1000)
+    
+    // NEW: Set up FAST events cleanup
+    setInterval(cleanupFastEvents, 5 * 60 * 1000)
 
     logInfo('Change tracking has been set up successfully')
     return true
@@ -192,6 +198,29 @@ function cleanupSplitOperations() {
     }
   } catch (error) {
     logError(`Error cleaning up split operations: ${error.message}`)
+  }
+}
+
+/**
+ * NEW: Cleanup function for FAST events tracking
+ */
+function cleanupFastEvents() {
+  try {
+    const now = Date.now()
+    let count = 0
+    
+    for (const [key, timestamp] of fastTicketEvents.entries()) {
+      if ((now - timestamp) > 5 * 60 * 1000) { // 5 minutes
+        fastTicketEvents.delete(key)
+        count++
+      }
+    }
+    
+    if (count > 0) {
+      logInfo(`Cleaned up ${count} expired FAST event records`)
+    }
+  } catch (error) {
+    logError(`Error cleaning up FAST events: ${error.message}`)
   }
 }
 
@@ -320,6 +349,12 @@ async function processTicketChanges() {
           
           // Also store the split operation key in the event
           row.splitOperationKey = splitOperationKey
+        }
+
+        // NEW: Track FAST events for payment delay
+        if (row.EventType === 'FAST' && row.UniqueCode) {
+          fastTicketEvents.set(row.UniqueCode, Date.now())
+          logDebug(`Tracked FAST event for bill ${row.Folio} with UniqueCode ${row.UniqueCode}`)
         }
 
         // Skip if we've already processed this exact event recently
@@ -725,9 +760,6 @@ async function processProductChanges() {
 /**
  * Process changes in the PaymentEvents table
  */
-/**
- * Process changes in the PaymentEvents table
- */
 async function processPaymentChanges() {
   const tableName = 'PaymentEvents'
   try {
@@ -830,6 +862,14 @@ async function processPaymentChanges() {
             uniquePaymentIds.add(strongUniqueKey)
           }
 
+          // NEW: Check if this payment is related to a FAST event and apply delay if needed
+          const needsDelay = row.UniqueBillCodePos && fastTicketEvents.has(row.UniqueBillCodePos);
+          
+          if (needsDelay) {
+            logDebug(`Applying 300ms delay for payment processing on FAST ticket ${row.Folio} with UniqueCode ${row.UniqueBillCodePos}`);
+            await new Promise(resolve => setTimeout(resolve, 300)); // 300ms delay
+          }
+
           // Check if referencia contains AvoqadoTpv
           const shouldSkipSending = row.Referencia && row.Referencia.includes('AvoqadoTpv');
           
@@ -883,6 +923,11 @@ async function processPaymentChanges() {
           if (row.TpvId !== null) message.tpvId = row.TpvId
 
           if (row.SplitSuffix !== null) message.split_suffix = row.SplitSuffix
+
+          // Add info if this payment had a delay applied
+          if (needsDelay) {
+            message._had_fast_delay = true;
+          }
 
           // Publish to RabbitMQ
           const publishResult = await publishEvent('PaymentEvents', message)
